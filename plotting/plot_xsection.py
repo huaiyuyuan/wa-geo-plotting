@@ -249,6 +249,22 @@ def _cmap(name, n=32):
         return plt.cm.get_cmap(name, n)
 
 
+# ── xi reference for dlnXi ────────────────────────────────────────────────────
+def _xi_ref(Xi, mode='depth'):
+    """Reference xi for dlnXi = (xi/ref - 1)*100, from ALL model nodes.
+    depth : mean xi of the whole model at each depth (like dVsv) - removes the
+            depth trend, shows lateral variation;
+    global: one mean over the whole model, all depths - note dlnXi is then just
+            xi linearly rescaled (same picture as the xi panel, re-centred)."""
+    if mode == 'global':
+        return np.full(Xi.shape[1], np.nanmean(Xi))
+    return np.nanmean(Xi, axis=0)
+
+
+def _xi_ref_label(mode):
+    return 'whole-model mean' if mode == 'global' else 'model mean at each depth'
+
+
 # ── Moho overlay: dashed line + optional grey mask below it ───────────────────
 def _draw_moho(ax, dist, moho, zbot, mask_alpha=0.5, lw=1.1):
     """Dashed Moho; with mask_alpha (0-1) a grey veil from the Moho down to zbot
@@ -267,7 +283,8 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
                  sigma_vsv=1.5, clim_rel=6.0,
                  out_dir='figures/xsections',
                  max_dist=None, km_per_in=None, panel_h_in=None, ref_mean=None,
-                 long_ratio=3.0, moho_mask=0.5):
+                 long_ratio=3.0, moho_mask=0.5, xi_panel='xi', xi_ref='depth',
+                 clim_xi=5.0):
     """One cross-section. Panels: Vsv/Viso | dlnVsv | [xi] | uncertainty (no misfit).
     Scale is set by the LONGEST section (drawn 2:1 per panel, full landscape width);
     km_per_in and panel_h_in are computed once from it and passed to every section so
@@ -311,8 +328,13 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     is_zt = 'ZT' in os.path.basename(getattr(plot_section, '_fvsname', '')) or have_xi
     vname = 'Viso' if is_zt else 'Vsv'
 
+    dxi_p = None
+    if have_xi and xi_panel in ('dxi', 'both'):
+        xref = _xi_ref(Xi, xi_ref)
+        dxi_p = (xi_p / xref[None, :] - 1.0) * 100.0
     rows = ['abs', 'rel']
-    if have_xi: rows.append('xi')
+    if have_xi and xi_panel in ('xi', 'both'): rows.append('xi')
+    if dxi_p is not None: rows.append('dxi')
     if have_err: rows.append('err')
     nrow = len(rows)
 
@@ -367,9 +389,12 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
             f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
     _pcolor(axes[r], dln_p, _cmap('RdBu', ncolors), -clim_rel, clim_rel,
             f'd{vname} (%)', title=f'd{vname} (%) vs model mean'); r += 1
-    if have_xi:
+    if have_xi and xi_panel in ('xi', 'both'):
         _pcolor(axes[r], xi_p, _cmap('RdBu', ncolors), 0.90, 1.10,
                 'xi', title='xi = Vsh/Vsv (blue = Vsh>Vsv)'); r += 1
+    if dxi_p is not None:
+        _pcolor(axes[r], dxi_p, _cmap('RdBu', ncolors), -clim_xi, clim_xi,
+                'dlnXi (%)', title=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'); r += 1
     if have_err:
         vmax_e = np.nanpercentile(err_p[np.isfinite(err_p)], 90)
         _pcolor(axes[r], err_p, _cmap('YlOrRd', ncolors), 0, vmax_e,
@@ -615,7 +640,8 @@ def _load_sections(path):
 def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
-               ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5):
+               ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
+               xi_ref='depth', clim_xi=5.0):
     """Stack ONE field for all sections on a single page. Rows = sections, same
     height, width proportional to length, longest spans the full page width.
     ve = vertical exaggeration (depth stretched x this; 1 = true scale, flat;
@@ -626,13 +652,17 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     else: zm = np.ones(len(z), bool)
     zbot = z[-1]
 
-    FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','err':'Vsv_err'}
+    FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','dxi':'Xi','err':'Vsv_err'}
     arrname = FKEY.get(field,'Vsv')
     if arrname not in d:
         print(f"  field {field}: {arrname} not in Fvs"); return
     ARR = d[arrname][:, zm]
     if ref_mean is None and field=='dvsv':
         ref_mean = np.array([np.nanmean(d['Vsv'][:,zm][:,k]) for k in range(ARR.shape[1])])
+    if field=='dxi':
+        xref = _xi_ref(ARR, xi_ref)
+        print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
+              f"{np.nanmin(xref):.3f}-{np.nanmax(xref):.3f}")
 
     _mi = None
     if moho_file:
@@ -652,6 +682,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         samp=_sample_profile(Lon,Lat,ARR,plon,plat)
         if field=='dvsv':
             samp=(samp-ref_mean[None,:])/ref_mean[None,:]*100
+        elif field=='dxi':
+            samp=(samp/xref[None,:]-1.0)*100
         mp=None
         if _mi is not None:
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
@@ -670,6 +702,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         cmap=_cmap('RdBu',ncolors); clab=f'd{vname} (%)'; ext='both'
     elif field=='xi':
         cmap=_cmap('RdBu',ncolors); clab='xi'; ext='both'
+    elif field=='dxi':
+        cmap=_cmap('RdBu',ncolors); clab=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'; ext='both'
     else:
         cmap=_cmap('YlOrRd',ncolors); clab=f'{vname} IQR/2'; ext='max'
 
@@ -679,7 +713,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     fig_h=n*row_h_in + (n-1)*gap_in + 1.2 + strip_h
     fig_w=page_w_in + 1.8                       # + per-panel colorbar room
     fig=plt.figure(figsize=(fig_w,fig_h))
-    fig.suptitle(f'{field.upper()} ({vname}) — {n} sections [depth 0-{zbot:.0f} km, '
+    fname = {'dxi': 'dlnXi'}.get(field, field.upper())
+    fig.suptitle(f'{fname} ({vname}) — {n} sections [depth 0-{zbot:.0f} km, '
                  f'longest {maxd:.0f} km, VE {ve:.0f}x]',
                  fontsize=11, fontweight='bold')
 
@@ -703,6 +738,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             vmn,vmx=-clim_rel,clim_rel
         elif field=='xi':
             vmn,vmx=0.90,1.10
+        elif field=='dxi':
+            vmn,vmx=-clim_xi,clim_xi
         else:
             vmn,vmx=vmin,vmax
         im=ax.pcolormesh(D,Z,p['data'],cmap=cmap,vmin=vmn,vmax=vmx,shading='auto')
@@ -758,6 +795,13 @@ def main():
                          'Click pairs of points (start,end) — Enter to finish.')
     ap.add_argument('--moho',      default=None,
                     help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
+    ap.add_argument('--xi-panel', default='xi', choices=['xi', 'dxi', 'both'],
+                    help='per-section xi row(s): xi, dlnXi, or both (ZT models)')
+    ap.add_argument('--xi-ref', default='depth', choices=['depth', 'global'],
+                    help='dlnXi reference: whole-model mean at each depth (default) or '
+                         'one whole-model mean over all depths')
+    ap.add_argument('--clim-xi', type=float, default=5.0,
+                    help='dlnXi colour limit, +/- %% (default 5)')
     ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
                     help='grey veil below the Moho to the bottom of the section (0-1, default 0.5)')
     ap.add_argument('--no-moho-mask', action='store_true', help='Moho line only, no grey veil')
@@ -766,7 +810,7 @@ def main():
     ap.add_argument('--load-sections', default=None,
                     help='Load section list from a file (skip ginput)')
     ap.add_argument('--stack', default=None,
-                    choices=['vsv','dvsv','xi','err'],
+                    choices=['vsv','dvsv','xi','dxi','err'],
                     help='Stack ONE field for all sections on a single A4 page '
                          '(rows=sections, same height, width proportional to length).')
     ap.add_argument('--vmin', type=float, default=None,
@@ -840,7 +884,8 @@ def main():
     moho_mask = None if args.no_moho_mask else args.moho_mask_alpha
     kw = dict(ds_deg=args.ds, ncolors=args.ncolors, d_max=args.d_max,
               sigma_vsv=args.sigma_vsv, clim_rel=args.clim_rel,
-              out_dir=args.out_dir, moho_mask=moho_mask)
+              out_dir=args.out_dir, moho_mask=moho_mask,
+              xi_panel=args.xi_panel, xi_ref=args.xi_ref, clim_xi=args.clim_xi)
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
     sections = []
@@ -902,7 +947,8 @@ def main():
                    ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
                    ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax,
                    ncolors=args.ncolors,
-                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha)
+                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
+                   xi_ref=args.xi_ref, clim_xi=args.clim_xi)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections
