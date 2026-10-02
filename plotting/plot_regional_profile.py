@@ -12,7 +12,8 @@ well each node is resolved. Optional AR23 Moho: mean +/- 1 sigma at the nodes.
 
   python3 plot_regional_profile.py --fvs Fvs.iter.3.ZT.npz --moho AR23-moho-hmp.txt \
       --d-max 60 --out figures/regional_profile.png
-  # --second vpvs | xi | auto (default: xi if present and varying, else Vp/Vs)
+  # default: xi varies -> Viso + xi (1x2); otherwise Vsv only (1 panel)
+  # --second xi | vpvs | none to force
   # --spread pct  -> bands are 16-84 % and 2.5-97.5 % percentiles instead of sigma
 
 Also writes <out>.txt: depth, mean, std, p2.5, p16, p50, p84, p97.5, mean_err per field.
@@ -82,8 +83,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fvs', required=True)
-    ap.add_argument('--second', default='auto', choices=['auto', 'xi', 'vpvs'],
-                    help='panel 2 field (auto: xi if present and varying, else Vp/Vs)')
+    ap.add_argument('--second', default='auto', choices=['auto', 'xi', 'vpvs', 'none'],
+                    help='auto (default): xi varies -> Viso + xi; otherwise Vsv only. '
+                         'xi / vpvs / none force panel 2.')
     ap.add_argument('--spread', default='sigma', choices=['sigma', 'pct'],
                     help='bands: +/-1,2 sigma (default) or 16-84 / 2.5-97.5 percentiles')
     ap.add_argument('--d-max', type=float, default=None, help='max depth (km)')
@@ -102,21 +104,31 @@ def main():
     nn = int(m.sum())
 
     second = a.second
-    if second == 'auto':
-        xi_ok = 'Xi' in d.files and np.nanstd(d['Xi'][m][:, zm]) > 1e-4
-        second = 'xi' if xi_ok else 'vpvs'
-    for f in ('vsv', second):
-        if FIELDS[f][0] not in d.files:
-            sys.exit(f"{a.fvs}: no '{FIELDS[f][0]}' array for panel '{f}'")
+    if second == 'auto':                       # xi model -> Viso + xi ; else Vsv only
+        xi_var = 'Xi' in d.files and np.nanstd(d['Xi'][m][:, zm]) > 1e-4
+        second = 'xi' if xi_var else 'none'
+    if second != 'none':
+        key = FIELDS[second][0]
+        if key not in d.files:
+            sys.exit(f"{os.path.basename(a.fvs)}: no '{key}' array.")
+        sd = np.nanstd(d[key][m][:, zm])
+        if sd <= 1e-4:
+            mean = np.nanmean(d[key][m][:, zm])
+            sys.exit(f"{os.path.basename(a.fvs)}: {key} is fixed at {mean:.4f} in this model "
+                     f"(spread {sd:.1e}) - nothing to plot. "
+                     + ("Use the ZT (xi) Fvs, or " if second == 'xi' else "")
+                     + "--second none for a Vsv-only figure.")
+    panels = ('vsv',) if second == 'none' else ('vsv', second)
 
     zt = 'Xi' in d.files and np.nanstd(d['Xi'][m][:, zm]) > 1e-4
     vname = 'Viso' if zt else 'Vsv'
     moho = moho_at_nodes(a.moho, d['Lat'][m], d['Lon'][m]) if a.moho else None
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 5.6), sharey=True,
-                             gridspec_kw=dict(wspace=0.08))
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.9 * len(panels) - 0.6, 5.6),
+                             sharey=True, gridspec_kw=dict(wspace=0.08), squeeze=False)
+    axes = axes[0]
     table = [z]; cols = ['depth_km']
-    for ax, f in zip(axes, ('vsv', second)):
+    for ax, f in zip(axes, panels):
         key, ekey, lab, colour = FIELDS[f]
         A = np.asarray(d[key], float)[m][:, zm]
         st = stats(A, a.spread)
