@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+# Large derived geojson (139 MB lithology) — regenerate from shapefiles
+data/*.geojson
+# Figures
+*.png
+*.pdf
