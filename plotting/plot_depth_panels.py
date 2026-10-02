@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""
+plot_depth_panels.py — Multi-depth 2x2 panels, ONE field per figure.
+Produces 3 figures (PNG+PDF): absolute, relative, model-error — each a 2x2
+grid of depths (default 10/20/30/40 km). Coastline + WA state + structural
+overlays. First panel can carry extra structural lines.
+
+Usage:
+  python3 plot_depth_panels.py --fvs Fvs.iter.2.Z.npz --depths 10 20 30 40 \
+      --smooth --out-dir figures/panels
+"""
+import argparse, os, sys
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)
+# repo layout: basemap/ (wa_basemap) and repo root (config) beside plotting/
+for _p in (os.path.join(_HERE, '..', 'basemap'), os.path.join(_HERE, '..')):
+    if os.path.abspath(_p) not in map(os.path.abspath, sys.path):
+        sys.path.insert(1, os.path.abspath(_p))
+from plot_depth_slice import (_make_ax, _add_states_ocean, _mask_wa_points,
+                              _plot_smooth, _plot_scatter, _cmap, _at_depth,
+                              _HAS_CARTOPY)
+try:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+except ImportError:
+    pass
+
+def _add_structural(ax):
+    """Add structural geology overlays to a panel (rivers as proxy + placeholder).
+    Extend here with WA terrane-boundary shapefiles when available."""
+    if not _HAS_CARTOPY: return
+    try:
+        ax.add_feature(cfeature.RIVERS, linewidth=0.3, edgecolor='0.3', alpha=0.4, zorder=9)
+    except Exception:
+        pass
+    # TODO: overlay GSWA terrane boundaries shapefile here:
+    #   import cartopy.io.shapereader as shpreader
+    #   reader = shpreader.Reader('/path/to/wa_terranes.shp')
+    #   ax.add_geometries(reader.geometries(), ccrs.PlateCarree(),
+    #                     facecolor='none', edgecolor='k', linewidth=0.6, zorder=9)
+
+def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_sm,
+           ndat_wa, sm, first=False):
+    ax = _make_ax(fig, rect)
+    z = d['z']
+    if field == 'vsv':
+        arr = d['Vsv']; label='Vsv (km/s)'; cmapname='RdBu'
+    elif field == 'xi':
+        arr = d['Xi']; label='xi'; cmapname='RdBu'
+    elif field == 'vpvs':
+        arr = d['Vpvs']; label='Vp/Vs'; cmapname='viridis'
+    else:
+        arr = d['Vsv']; label='Vsv'; cmapname='RdBu'
+    val = _at_depth(arr, z, zt)
+    val_wa = val[wa]; val_sm = val_wa[sm]
+
+    if mode == 'abs':
+        med, std = np.nanmedian(val_sm), np.nanstd(val_sm)
+        vmin, vmax = med - args.sigma_abs*std, med + args.sigma_abs*std
+        cmap = _cmap(cmapname, args.ncolors)
+        data_sm, data_wa = val_sm, val_wa
+        cbl = label
+    elif mode == 'rel':
+        mean = np.nanmean(val_sm)
+        rel_sm = (val_sm-mean)/mean*100
+        rel_wa = (val_wa-mean)/mean*100
+        vmin, vmax = -args.clim_rel, args.clim_rel
+        cmap = _cmap('RdBu', args.ncolors)
+        data_sm, data_wa = rel_sm, rel_wa
+        cbl = f'd{label.split()[0]} (%)'
+    elif mode == 'error':  # DATA misfit (fit quality) — one value per node
+        if 'Misfit' not in d:
+            ax.set_visible(False); return
+        mis = d['Misfit'][wa].astype(float)
+        fin = np.isfinite(mis)
+        vmax = np.nanpercentile(mis[fin], 90) if fin.any() else 1
+        cmap = _cmap('YlOrRd', args.ncolors)
+        im = _plot_scatter(ax, Lon_wa[fin], Lat_wa[fin], mis[fin], cmap, 0, vmax, s=args.markersize)
+        plt.colorbar(im, ax=ax, shrink=0.75, label='RMS misfit (km/s)', extend='max')
+        ax.set_title(f'z={zt:.0f} km', fontsize=9)
+        _add_states_ocean(ax)
+        if first: _add_structural(ax)
+        return
+    else:  # uncert — MODEL uncertainty (posterior IQR) at this depth
+        errkey = {'vsv':'Vsv_err','xi':'Xi_err','vpvs':'Vpvs_err'}.get(field,'Vsv_err')
+        if errkey not in d:
+            ax.set_visible(False); return
+        err = _at_depth(d[errkey], z, zt)[wa].astype(float)
+        fin = np.isfinite(err)
+        vmax = np.nanpercentile(err[fin], 90) if fin.any() else 1
+        cmap = _cmap('YlOrRd', args.ncolors)
+        im = _plot_scatter(ax, Lon_wa[fin], Lat_wa[fin], err[fin], cmap, 0, vmax, s=args.markersize)
+        plt.colorbar(im, ax=ax, shrink=0.75, label=f'{field} IQR/2', extend='max')
+        ax.set_title(f'z={zt:.0f} km', fontsize=9)
+        _add_states_ocean(ax)
+        if first: _add_structural(ax)
+        return
+
+    if args.smooth:
+        im, *_ = _plot_smooth(ax, Lon_sm, Lat_sm, data_sm, cmap, vmin, vmax,
+                              method=args.interp, npts=args.npts,
+                              all_lon=Lon_wa, all_lat=Lat_wa,
+                              ndat=ndat_wa, ndat_min=args.min_ndat, max_dist=args.max_dist)
+    else:
+        im = _plot_scatter(ax, Lon_wa, Lat_wa, data_wa, cmap, vmin, vmax, s=args.markersize)
+    plt.colorbar(im, ax=ax, shrink=0.75, label=cbl, extend='both')
+    ax.set_title(f'z={zt:.0f} km', fontsize=9)
+    _add_states_ocean(ax)
+    if first: _add_structural(ax)
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--fvs', required=True)
+    ap.add_argument('--depths', nargs='+', type=float, default=[10,20,30,40])
+    ap.add_argument('--field', default='vsv', choices=['vsv','xi','vpvs'])
+    ap.add_argument('--modes', nargs='+', default=['abs','rel','error'],
+                    choices=['abs','rel','error','uncert'],
+                    help='abs|rel|error(data misfit)|uncert(posterior IQR)')
+    ap.add_argument('--smooth', action='store_true')
+    ap.add_argument('--interp', default='rbf')
+    ap.add_argument('--npts', type=int, default=200)
+    ap.add_argument('--markersize', type=float, default=120)
+    ap.add_argument('--ncolors', type=int, default=32)
+    ap.add_argument('--sigma-abs', type=float, default=1.25)
+    ap.add_argument('--clim-rel', type=float, default=6.0)
+    ap.add_argument('--min-ndat', type=int, default=35)
+    ap.add_argument('--max-dist', type=float, default=0.5)
+    ap.add_argument('--out-dir', default='figures/panels')
+    args = ap.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    d = np.load(args.fvs, allow_pickle=True)
+    Lon, Lat = d['Lon'], d['Lat']
+    wa = _mask_wa_points(Lon, Lat)
+    Lon_wa, Lat_wa = Lon[wa], Lat[wa]
+    ndat_wa = d['Ndat'][wa].astype(float) if 'Ndat' in d else None
+    if args.min_ndat>0 and ndat_wa is not None:
+        sm = ndat_wa >= args.min_ndat
+    else:
+        sm = np.ones(wa.sum(), dtype=bool)
+    Lon_sm, Lat_sm = Lon_wa[sm], Lat_wa[sm]
+
+    depths = args.depths[:4]  # 2x2
+    rects = [[0.04,0.53,0.40,0.42],[0.53,0.53,0.40,0.42],
+             [0.04,0.05,0.40,0.42],[0.53,0.05,0.40,0.42]]
+    base = os.path.basename(args.fvs).replace('.npz','')
+    titles = {'abs':'Absolute','rel':'Relative',
+              'error':'Data misfit (RMS)','uncert':'Model uncertainty (posterior IQR)'}
+
+    for mode in args.modes:
+        fig = plt.figure(figsize=(13,13))
+        fig.suptitle(f'{base} — {args.field.upper()} {titles[mode]}', fontsize=13, fontweight='bold')
+        for k,zt in enumerate(depths):
+            _panel(fig, rects[k], d, zt, args.field, mode, args, wa,
+                   Lon_wa, Lat_wa, Lon_sm, Lat_sm, ndat_wa, sm, first=(k==0))
+        stem = os.path.join(args.out_dir, f'{args.field}.{mode}.panels')
+        fig.savefig(stem+'.png', dpi=150, bbox_inches='tight')
+        fig.savefig(stem+'.pdf', bbox_inches='tight')
+        plt.close(fig)
+        print(f'Saved: {stem}.png / .pdf')
+
+if __name__ == '__main__':
+    main()

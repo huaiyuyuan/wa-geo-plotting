@@ -17,6 +17,15 @@ Source data: GSWA GEOLOGY 10M Tectonics, GDA2020, CC-BY-4.0. Attribute GSWA.
 import argparse, struct, json, os
 import numpy as np
 
+def _objarr(items):
+    """1-D object array of arrays. np.array(list, dtype=object) silently stacks
+    equal-length arrays into an N-D object array; this never does."""
+    out = np.empty(len(items), dtype=object)
+    for i, x in enumerate(items):
+        out[i] = x
+    return out
+
+
 # --- Pure-Python ESRI shapefile + DBF readers ---
 def read_shp_polygons(path):
     with open(path,'rb') as f: data=f.read()
@@ -40,6 +49,16 @@ def read_shp_polygons(path):
         pos = rstart + 2*clen
     return shapes
 
+def _dec(b):
+    """DBF text: UTF-8 (GSWA shapefiles) with Latin-1 fallback; en/em dashes -> '-'
+    so names match the colour tables ('Albany-Fraser Orogen')."""
+    try:
+        s = b.decode('utf-8')
+    except UnicodeDecodeError:
+        s = b.decode('latin1')
+    return s.strip().replace('\u2013', '-').replace('\u2014', '-')
+
+
 def read_dbf(path):
     with open(path,'rb') as f: d=f.read()
     nrec=struct.unpack('<I',d[4:8])[0]; hlen=struct.unpack('<H',d[8:10])[0]; rlen=struct.unpack('<H',d[10:12])[0]
@@ -51,7 +70,7 @@ def read_dbf(path):
     for _ in range(nrec):
         off=pos+1; row={}
         for nm,fl in fields:
-            row[nm]=d[off:off+fl].decode('latin1').strip().replace('\u2013','-'); off+=fl
+            row[nm]=_dec(d[off:off+fl]); off+=fl
         recs.append(row); pos+=rlen
     return recs
 
@@ -63,7 +82,12 @@ PARENT_COLORS = {
     'Granites-Tanami Orogen':'#bcbd22','Kepa Kurl Booya Province':'#aec7e8','Coompana Province':'#c5b0d5',
     'Centralian Superbasin':'#ffdd88','Westralian Superbasin':'#add8e6','Phanerozoic basins':'#add8e6',
     'Neoproterozoic basins':'#f0e68c','Barren Basin':'#f5deb3','STATE':'#dfefb0',
+    'Fortescue Basin':'#e6a157',
 }
+# PARENTNAME groups that are super-units: their rings are grouped/coloured by their
+# own unit name instead (WAC children = Yilgarn, Pilbara, Capricorn, Albany-Fraser,
+# Fortescue Basin), so e.g. the Pilbara and Fortescue are not one 'craton' colour.
+SPLIT_PARENTS = {'West Australian Craton'}
 DEFAULT_COLOR='#e8e8e8'
 
 def main():
@@ -72,25 +96,32 @@ def main():
     ap.add_argument('--out-npz', default=None)
     ap.add_argument('--out-json', default=None)
     ap.add_argument('--color-field', default='PARENTNAME')
+    ap.add_argument('--name-field', default='TECTNAME',
+                    help='per-ring unit name saved as "names" (terrane strip on sections)')
     args=ap.parse_args()
 
     dbf = args.shp.replace('.shp','.dbf')
     shapes = read_shp_polygons(args.shp)
     recs   = read_dbf(dbf)
     print(f"{len(shapes)} polygons, {len(recs)} records")
+    if len(shapes) != len(recs):
+        print("  WARNING: polygon/record count mismatch - names may be misaligned")
 
     # npz: flat rings + colors
-    ring_coords=[]; ring_color=[]; ring_parent=[]
+    ring_coords=[]; ring_color=[]; ring_parent=[]; ring_name=[]
     # geojson: FeatureCollection
     features=[]
     for rings, rec in zip(shapes, recs):
         key = rec.get(args.color_field,'')
+        if key in SPLIT_PARENTS and rec.get(args.name_field,''):
+            key = rec.get(args.name_field)          # e.g. 'Pilbara Craton', 'Fortescue Basin'
         col = PARENT_COLORS.get(key, DEFAULT_COLOR)
         poly_rings=[]
         for r in rings:
             if len(r)>=3:
                 ring_coords.append(np.asarray(r,dtype=np.float32))
                 ring_color.append(col); ring_parent.append(key)
+                ring_name.append(rec.get(args.name_field,''))
                 poly_rings.append([[float(x),float(y)] for x,y in r])
         if poly_rings:
             features.append({"type":"Feature",
@@ -102,12 +133,15 @@ def main():
 
     if args.out_npz:
         os.makedirs(os.path.dirname(args.out_npz), exist_ok=True)
+        miss = sorted({p for p in ring_parent if p not in PARENT_COLORS})
+        if miss:
+            print(f"  groups with no colour (default grey): {miss}")
         np.savez_compressed(args.out_npz,
-            rings=np.array(ring_coords,dtype=object),
+            rings=_objarr(ring_coords),
             colors=np.array(ring_color), parents=np.array(ring_parent),
+            names=np.array(ring_name),
             parent_color_keys=np.array(list(PARENT_COLORS.keys())),
-            parent_color_vals=np.array(list(PARENT_COLORS.values())),
-            allow_pickle=True)
+            parent_color_vals=np.array(list(PARENT_COLORS.values())))
         print(f"npz: {args.out_npz} ({len(ring_coords)} rings)")
 
     if args.out_json:

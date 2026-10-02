@@ -17,13 +17,118 @@ Usage:
       --sections "-35,115/-20,128/MW2" "-32,114/-24,127/SW1" \
       --out-dir figures/xsections
 
+  # Surface-geology strips above the top panel + crustal-boundary lines:
+  python3 plot_xsection.py --fvs Fvs.iter.2.Z.npz --load-sections sections.txt \
+      --strips                                  # = litho,boundaries
+  python3 plot_xsection.py ... --strips litho,domain,boundaries,names
+      litho       GSWA 500k lithology strip (velocity-oriented colours)
+      domain      terrane strip (10M TECTNAME, labelled in the strip)
+      boundaries  dashed lines where Major Crustal Boundaries cross the section
+      names       label the boundary crossings with their NAME
+  npz paths come from config.py, else ./data/ (override: --litho-npz etc.)
+
 H. Yuan / Claude, Sep 2026
 """
-import argparse, os
+import argparse, os, sys
+from pathlib import Path
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+# Repo root (config.py), basemap/ (wa_basemap) and plotting/ on the import path,
+# so the script runs from anywhere.
+_REPO = Path(__file__).resolve().parents[1]
+for _p in (_REPO, _REPO / 'basemap', _REPO / 'plotting'):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+
+# ── Section geology strips (lithology / terranes / crustal boundaries) ───────
+_GEO = None          # loaded once in main(); workers reload only if not inherited
+_STRIP_ITEMS = {'litho', 'domain', 'boundaries', 'names'}
+_STRIPS_DEFAULT = 'litho,domain,boundaries,names'   # geology strips are on unless --no-strips
+
+
+def _resolve_npz(cfg_name, fname, override=None):
+    """--*-npz override, else config.<cfg_name>, else <repo>/data/<fname>."""
+    cands = [override] if override else []
+    try:
+        import config
+        cands.append(getattr(config, cfg_name, None))
+    except Exception:
+        pass
+    cands.append(str(_REPO / 'data' / fname))
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None):
+    import xsection_strips as xs
+    want = {w.strip() for w in spec.split(',') if w.strip()}
+    bad = want - _STRIP_ITEMS
+    if bad:
+        raise SystemExit(f"--strips: unknown item(s) {sorted(bad)}; "
+                         f"choose from {sorted(_STRIP_ITEMS)}")
+    g = dict(litho=None, tect=None, bnd=None, names='names' in want)
+    jobs = (('litho', 'litho', 'LITHOLOGY_NPZ', 'wa_lithology.npz', litho_npz,
+             xs.PolygonIndex.from_npz),
+            ('domain', 'tect', 'TECTONICS_NPZ', 'wa_tectonics.npz', tect_npz,
+             lambda p: xs.PolygonIndex.from_npz(p, class_key='names')),
+            ('boundaries', 'bnd', 'BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
+             bnd_npz, xs.BoundarySet.from_npz))
+    for item, key, cfg, fname, ov, loader in jobs:
+        if item not in want:
+            continue
+        path = _resolve_npz(cfg, fname, ov)
+        if path is None:
+            print(f"  --strips {item}: {fname} not found (config.{cfg} or data/) - skipped")
+            continue
+        g[key] = loader(path)
+        print(f"  strips: {item} <- {path}")
+    return g
+
+
+def _strip_height_in(g):
+    """Vertical room the strips (and rotated boundary names) need above a panel."""
+    if g is None:
+        return 0.0
+    h = 0.17 * ((g['litho'] is not None) + (g['tect'] is not None))
+    if g['names'] and g['bnd'] is not None:
+        h += 0.55
+    return h
+
+
+def _add_geology(top_ax, axes, plon, plat, dist):
+    if _GEO is None:
+        return None
+    import xsection_strips as xs
+    res = xs.add_profile_strips(top_ax, axes, plon, plat, dist,
+                                litho=_GEO['litho'], tectonic=_GEO['tect'],
+                                boundaries=_GEO['bnd'], label_boundaries=_GEO['names'])
+    if res.crossings:
+        print('  boundary crossings: ' + ', '.join(
+            f"{c.dist:.0f} km" + (f" ({'/'.join(c.names)})" if c.names else '')
+            for c in res.crossings))
+    return res
+
+
+def _geology_legend(fig, results, anchor_ax, ncol=4, below_in=0.62):
+    """Lithology legend a fixed distance below anchor_ax (clear of tick labels and
+    xlabel); only classes seen on these sections."""
+    import xsection_strips as xs
+    from matplotlib.transforms import offset_copy
+    runs = [r.runs['litho'] for r in results if r is not None and 'litho' in r.runs]
+    if not runs:
+        return
+    h = xs.legend_handles(runs)
+    tr = offset_copy(anchor_ax.transAxes, fig=fig, y=-below_in, units='inches')
+    fig.legend(handles=h, loc='upper center', bbox_to_anchor=(0.5, 0.0),
+               bbox_transform=tr,
+               ncol=min(ncol, len(h)), fontsize=7, frameon=False,
+               title='Surface lithology - GSWA 1:500k (CC-BY-4.0)', title_fontsize=7)
 
 # ── Great circle path ─────────────────────────────────────────────────────────
 def _great_circle_path(lat1, lon1, lat2, lon2, ds_deg=0.08):
@@ -122,6 +227,20 @@ def _sample_2d(Lon, Lat, data2d, prof_lon, prof_lat):
         return griddata(pts[fin], data2d[fin], qpts, method='linear')
 
 
+# ── Section scale (shared by per-section and --stack; plot_stack's math) ─────
+PAGE_W_IN = 9.5     # longest section spans this many inches
+DEFAULT_VE = 3.0   # approved flat-strip look; per-section and --stack share it
+
+
+def _section_scale(maxd, zbot, ve=DEFAULT_VE, page_w_in=PAGE_W_IN):
+    """km_per_in = longest/page_w_in ; panel height = depth*VE/km_per_in.
+    Each section's width = its length/km_per_in. The panel box sets the drawn
+    aspect (no set_aspect anywhere), so every section in both modes shares the
+    same horizontal scale, the same height and the same VE."""
+    km_per_in = maxd / page_w_in
+    return km_per_in, zbot * ve / km_per_in
+
+
 # ── Colormap helper ───────────────────────────────────────────────────────────
 def _cmap(name, n=32):
     try:
@@ -132,7 +251,7 @@ def _cmap(name, n=32):
 
 # ── Single cross-section ──────────────────────────────────────────────────────
 def plot_section(d, lat1, lon1, lat2, lon2, label,
-                 ds_deg=0.08, ncolors=32, d_max=None,
+                 ds_deg=0.08, ncolors=16, d_max=None,
                  sigma_vsv=1.5, clim_rel=6.0,
                  out_dir='figures/xsections',
                  max_dist=None, km_per_in=None, panel_h_in=None, ref_mean=None,
@@ -189,26 +308,42 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     # Scale set by the longest section (full landscape width @ 2:1 per panel).
     # If not supplied, derive from THIS section (standalone use).
     # A4 landscape usable panel width (A4 = 11.69 x 8.27 in; leave room for cbar)
-    A4_PANEL_W = 10.0
     if max_dist is None: max_dist = xmax
-    if km_per_in is None:  km_per_in  = max_dist / A4_PANEL_W        # longest → A4 width
-    if panel_h_in is None: panel_h_in = A4_PANEL_W / long_ratio      # long_ratio:1 for longest
+    if km_per_in is None or panel_h_in is None:          # standalone use: same scale rule
+        km_per_in, panel_h_in = _section_scale(max_dist, zbot)
     # This section: width ∝ its length at the shared km/in; height is the SHARED height
     panel_w_in = max(1.2, xmax / km_per_in)
-    cbar_in    = 1.5
-    fig_w = panel_w_in + cbar_in
-    fig_h = panel_h_in * nrow + 0.9
-    vexag = (max_dist / zbot) / long_ratio     # implied VE (longest drawn long_ratio:1)
-    fig, axes = plt.subplots(nrow, 1, figsize=(fig_w, fig_h), sharex=True)
-    if nrow == 1: axes = [axes]
+    # Explicit layout in inches: every panel is EXACTLY panel_w_in x panel_h_in, so
+    # the drawn VE is exact and identical across sections (plt.subplots margins and
+    # colorbar(ax=...) used to shrink panels by different amounts).
+    strip_h = _strip_height_in(_GEO)
+    L_in, R_in = 0.75, 1.05             # ylabel+ticks | gap+colorbar+its labels
+    T_in = 0.55 + 0.30 + strip_h        # suptitle + panel title + geology strips
+    B_in, G_in = 0.65, 0.42             # xticks+xlabel | between panels (titles)
+    fig_w = L_in + panel_w_in + R_in
+    fig_h = T_in + nrow * panel_h_in + (nrow - 1) * G_in + B_in
+    vexag = (xmax / panel_w_in) / (zbot / panel_h_in)   # drawn VE, exact
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    axes = []
+    for i in range(nrow):
+        y0 = fig_h - T_in - (i + 1) * panel_h_in - i * G_in
+        axes.append(fig.add_axes([L_in / fig_w, y0 / fig_h, panel_w_in / fig_w,
+                                  panel_h_in / fig_h],
+                                 sharex=axes[0] if axes else None))
+    for ax in axes[:-1]:
+        ax.tick_params(labelbottom=False)
     fig.suptitle(f'{label}:  ({lat1:.1f}°,{lon1:.1f}°) -> ({lat2:.1f}°,{lon2:.1f}°)   '
-                 f'[{xmax:.0f} km, VE {vexag:.0f}x]', fontsize=11, fontweight='bold')
+                 f'[{xmax:.0f} km, VE {vexag:.1f}x]', fontsize=11, fontweight='bold',
+                 y=1.0 - 0.12 / fig_h, va='top')
+    print(f"  Panels {panel_w_in:.2f} x {panel_h_in:.2f} in  ->  VE {vexag:.2f}x")
 
     def _pcolor(ax, data, cmap, vmin, vmax, clabel, extend='both', title=''):
         im = ax.pcolormesh(D, Z, data, cmap=cmap, vmin=vmin, vmax=vmax, shading='auto')
         ax.set_ylim(zbot, 0); ax.set_xlim(0, xmax)
         ax.set_ylabel('Depth (km)', fontsize=9); ax.tick_params(labelsize=8)
-        cb = plt.colorbar(im, ax=ax, shrink=0.95, pad=0.01, extend=extend, aspect=10)
+        pos = ax.get_position()           # colorbar in its own axes: panel keeps its size
+        cax = fig.add_axes([pos.x1 + 0.10 / fig_w, pos.y0, 0.16 / fig_w, pos.height])
+        cb = fig.colorbar(im, cax=cax, extend=extend)
         cb.set_label(clabel, fontsize=8); cb.ax.tick_params(labelsize=7)
         if title: ax.set_title(title, fontsize=9, loc='left')
         if moho_prof is not None:
@@ -231,6 +366,10 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
 
     axes[-1].set_xlabel('Distance along profile (km)', fontsize=9)
     axes[-1].set_xticks(np.arange(0, xmax+1, 100))
+
+    geo = _add_geology(axes[0], axes, plon, plat, dist)
+    if geo is not None:
+        _geology_legend(fig, [geo], axes[-1], ncol=4 if panel_w_in > 5 else 2)
 
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, f'xsection.{label}.png')
@@ -322,8 +461,27 @@ def _ginput_sections(d, moho_file=None):
     return sections
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def _plot_index_map(d, sections, out_dir, label='sections', moho=None):
-    """Draw all section lines on the WA tectonic map with distance ticks + labels."""
+def _load_stations(path, cols=(2, 1)):
+    """Station lon/lat from a 'code lat lon' style file (whitespace or comma;
+    header/comment/bad lines skipped). cols = (lon_col, lat_col), 0-indexed."""
+    lon, lat = [], []
+    with open(path) as f:
+        for line in f:
+            p = line.replace(',', ' ').split()
+            if not p or p[0].startswith('#'):
+                continue
+            try:
+                lon.append(float(p[cols[0]])); lat.append(float(p[cols[1]]))
+            except (ValueError, IndexError):
+                continue
+    return np.array(lon), np.array(lat)
+
+
+def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
+                    litho_npz=None, tick_km=100, stations=None, style='gswa'):
+    """Section lines on the WA tectonic map, with distance ticks + labels every
+    tick_km. If litho_npz is given, the GSWA 500k granite + mafic/greenstone/
+    granite-greenstone polygons are drawn inside the Yilgarn and Pilbara cratons."""
     import matplotlib.pyplot as plt
     Lon = d['Lon']; Lat = d['Lat']
     try:
@@ -341,8 +499,20 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None):
     # to WA, not the full tectonic polygon extent (which reaches the NT/ocean).
     cb = (Lon.min()-1.0, Lon.max()+1.0, Lat.min()-1.0, Lat.max()+1.0)
     try:
-        from wa_basemap import add_tectonic_background, add_tectonic_outlines, tectonic_legend
+        from wa_basemap import (add_tectonic_background, add_tectonic_outlines,
+                                tectonic_legend, add_craton_geology,
+                                add_gswa_units, has_gswa_colours)
+        if style == 'gswa' and not (litho_npz and has_gswa_colours(litho_npz)):
+            print("  (index map: lithology npz has no GSWA colours - re-run "
+                  "extract/make_litho.py; using --index-style craton)")
+            style = 'craton'
         add_tectonic_background(ax, alpha=0.5, zorder=0, transform=tr, clip_box=cb)
+        litho_drawn = None
+        if style == 'gswa':
+            add_gswa_units(ax, litho_npz, transform=tr, clip_box=cb, zorder=1)
+        elif style == 'craton' and litho_npz:
+            litho_drawn = add_craton_geology(ax, litho_npz, zorder=1, transform=tr,
+                                             clip_box=cb)
         add_tectonic_outlines(ax, lw=0.4, alpha=0.6, zorder=3, major_only=True,
                               transform=tr, clip_box=cb)
         _tect = True
@@ -352,18 +522,29 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None):
                    **({'transform': tr} if tr else {})); _tect = False
 
     lkw = {'transform': tr} if tr else {}
+    n_sta = 0
+    if stations is not None:            # above the ocean mask (5), below section lines
+        slon, slat = stations
+        n_sta = len(slon)
+        ax.scatter(slon, slat, marker='^', s=16, c='k', edgecolors='w',
+                   linewidths=0.35, zorder=5.5, **lkw)
+    if _GEO is not None and _GEO['bnd'] is not None:
+        from matplotlib.collections import LineCollection
+        ax.add_collection(LineCollection(_GEO['bnd'].lines, colors='firebrick',
+                                         linewidths=0.9, alpha=0.8, zorder=4, **lkw))
     for i, (lat1, lon1, lat2, lon2, lab) in enumerate(sections):
         plat, plon, dist = _great_circle_path(lat1, lon1, lat2, lon2)
         ax.plot(plon, plat, 'w-', lw=3.4, zorder=5, **lkw)   # white halo
         ax.plot(plon, plat, 'k-', lw=2.0, zorder=6, **lkw)
         ax.plot(lon1, lat1, 'ko', ms=6, zorder=7, **lkw)
         ax.plot(lon2, lat2, 'ks', ms=6, zorder=7, **lkw)
-        for dkm in np.arange(0, dist[-1], 200):
+        for dkm in np.arange(0, dist[-1], tick_km):
             j = np.argmin(np.abs(dist - dkm))
-            ax.plot(plon[j], plat[j], '|', color='k', ms=10, mew=1.5, zorder=7, **lkw)
-            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=6,
+            ax.plot(plon[j], plat[j], '|', color='k', ms=7, mew=1.2, zorder=7, **lkw)
+            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=5.5,
                         ha='center', va='bottom', zorder=8,
-                        xytext=(0,3), textcoords='offset points')
+                        xytext=(0, 3), textcoords='offset points',
+                        bbox=dict(fc='w', ec='none', alpha=0.6, pad=0.3))
         ax.annotate(lab, (lon1, lat1), fontsize=9, fontweight='bold',
                     color='darkred', zorder=8, xytext=(5,5),
                     textcoords='offset points')
@@ -377,10 +558,19 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None):
         ax.set_xlim(Lon.min()-0.5, Lon.max()+0.5)
         ax.set_ylim(Lat.min()-0.5, Lat.max()+0.5); ax.set_aspect('equal')
     ax.set_xlabel('Longitude'); ax.set_ylabel('Latitude')
-    ax.set_title(f'Cross-section locations ({len(sections)} lines, ticks every 200 km)',
+    ax.set_title(f'Cross-section locations ({len(sections)} lines, ticks every {tick_km:g} km'
+                 + (f'; {n_sta} stations)' if n_sta else ')'),
                  fontsize=11)
-    if _tect:
-        tectonic_legend(ax, loc='upper left', fontsize=10)
+    if _tect and style == 'gswa':
+        ax.text(0.01, 0.99, 'Geology: GSWA 1:500k tectonic units, GSWA colours\n'
+                '(\u00a9 Geological Survey of Western Australia, CC-BY-4.0)',
+                transform=ax.transAxes, ha='left', va='top', fontsize=7, zorder=12,
+                bbox=dict(fc='w', ec='0.6', alpha=0.9, pad=3))
+    elif _tect:
+        tectonic_legend(ax, loc='upper left', fontsize=7,
+                        clip_box=(Lon.min()-0.5, Lon.max()+0.5, Lat.min()-0.5, Lat.max()+0.5),
+                        exclude=('STATE',),
+                        litho=litho_drawn)
     import os
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, f'xsection_index_map.png')
@@ -411,9 +601,9 @@ def _load_sections(path):
 
 
 def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
-               ncolors=32, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
+               ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
-               ve=5.0, vmin=None, vmax=None):
+               ve=DEFAULT_VE, vmin=None, vmax=None):
     """Stack ONE field for all sections on a single page. Rows = sections, same
     height, width proportional to length, longest spans the full page width.
     ve = vertical exaggeration (depth stretched x this; 1 = true scale, flat;
@@ -453,14 +643,14 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         mp=None
         if _mi is not None:
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
-        prof.append(dict(lab=lab,dist=dist,data=samp,moho=mp))
+        prof.append(dict(lab=lab,dist=dist,data=samp,moho=mp,plat=plat,plon=plon))
     maxd=max(p['dist'][-1] for p in prof)
 
     # Horizontal scale: longest fills page_w_in. Row height from VE:
     #   km_per_in = maxd/page_w_in ; row_h_in = zbot*ve/km_per_in
-    km_per_in = maxd / page_w_in
+    km_per_in, ve_h = _section_scale(maxd, zbot, ve, page_w_in)
     if row_h_in is None:
-        row_h_in = zbot * ve / km_per_in
+        row_h_in = ve_h
 
     if field=='vsv':
         cmap=_cmap('RdBu',ncolors); clab=f'{vname} (km/s)'; ext='both'
@@ -472,7 +662,9 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         cmap=_cmap('YlOrRd',ncolors); clab=f'{vname} IQR/2'; ext='max'
 
     n=len(prof)
-    fig_h=n*row_h_in + (n-1)*gap_in + 1.2
+    strip_h=_strip_height_in(_GEO)          # room for geology strips above each row
+    gap_in=gap_in+strip_h; top_in=0.9+strip_h
+    fig_h=n*row_h_in + (n-1)*gap_in + 1.2 + strip_h
     fig_w=page_w_in + 1.8                       # + per-panel colorbar room
     fig=plt.figure(figsize=(fig_w,fig_h))
     fig.suptitle(f'{field.upper()} ({vname}) — {n} sections [depth 0-{zbot:.0f} km, '
@@ -481,9 +673,10 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
 
     usable=page_w_in/fig_w
     rh=row_h_in/fig_h
+    geo_res=[]
     for i,p in enumerate(prof):
         w=(p['dist'][-1]/maxd)*usable
-        y0=1-(0.9/fig_h)-(i+1)*rh-i*(gap_in/fig_h)
+        y0=1-(top_in/fig_h)-(i+1)*rh-i*(gap_in/fig_h)
         ax=fig.add_axes([0.08, y0, w, rh])
         D,Z=np.meshgrid(p['dist'],z,indexing='ij')
         # colour limits: explicit --vmin/--vmax win; else per-field defaults
@@ -514,7 +707,10 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         cax=fig.add_axes([0.08+w+0.008, y0, 0.012, rh])
         cb=fig.colorbar(im,cax=cax,extend=ext); cb.ax.tick_params(labelsize=6)
         if i==0: cb.set_label(clab,fontsize=8)
+        geo_res.append(_add_geology(ax,[ax],p['plon'],p['plat'],p['dist']))
 
+    if geo_res:
+        _geology_legend(fig, geo_res, ax, below_in=0.55)
     os.makedirs(out_dir,exist_ok=True)
     out=os.path.join(out_dir,f'xsection_stack.{field}.png')
     fig.savefig(out,dpi=150,bbox_inches='tight')
@@ -543,7 +739,8 @@ def main():
                     help='Colorlim = median ± sigma*std for Vsv (default 1.5)')
     ap.add_argument('--clim-rel',  type=float, default=6.0,
                     help='±clim for dlnVsv %% (default 6)')
-    ap.add_argument('--ncolors',   type=int,   default=32)
+    ap.add_argument('--ncolors',   type=int,   default=16,
+                    help='Discrete colour levels per colormap (default 16; e.g. 32 for finer)')
     ap.add_argument('--ginput',  action='store_true',
                     help='Pick section endpoints interactively from Ndat map. '
                          'Click pairs of points (start,end) — Enter to finish.')
@@ -561,17 +758,51 @@ def main():
                     help='Fixed colour min for the stacked field (all panels same scale)')
     ap.add_argument('--vmax', type=float, default=None,
                     help='Fixed colour max for the stacked field')
-    ap.add_argument('--stack-ve', type=float, default=5.0,
-                    help='Vertical exaggeration for stacked sections (1=true scale/flat, higher=taller; default 5).')
+    ap.add_argument('--stack-ve', type=float, default=DEFAULT_VE,
+                    help='Vertical exaggeration for stacked sections (1=true scale/flat, higher=taller; default 3).')
     ap.add_argument('--index-map', action='store_true',
                     help='Also draw an index map of all sections on the tectonic geology')
-    ap.add_argument('--long-ratio', type=float, default=3.0,
-                    help='Width:height of the LONGEST section panel (default 1.5). '
-                         'Lower = more vertical exaggeration; higher = flatter.')
+    ap.add_argument('--long-ratio', type=float, default=None,
+                    help='LEGACY: width:height of the longest panel (overrides --ve). '
+                         'Default: size by VE like --stack.')
+    ap.add_argument('--ve', type=float, default=None,
+                    help='Vertical exaggeration for per-section figures '
+                         '(default = --stack-ve, 3): same sizing as --stack.')
     ap.add_argument('--nproc', type=int, default=1,
                     help='Parallelise section plotting across N cores (default 1)')
+    ap.add_argument('--strips', nargs='?', const=_STRIPS_DEFAULT, default=_STRIPS_DEFAULT,
+                    help='Surface-geology strips above the top panel: comma list of '
+                         'litho,domain,boundaries,names (default: all four)')
+    ap.add_argument('--no-strips', action='store_true', help='plain sections, no geology strips')
+    ap.add_argument('--index-only', action='store_true',
+                    help='with --index-map: draw only the map, do not re-plot any sections')
+    ap.add_argument('--litho-npz', default=None, help='override lithology npz')
+    ap.add_argument('--index-tick', type=float, default=100,
+                    help='--index-map distance tick/label spacing in km (default 100)')
+    ap.add_argument('--stations', default=None,
+                    help='--index-map station file (default config.STATIONS; '
+                         'columns from config.STATION_COLS)')
+    ap.add_argument('--no-stations', action='store_true', help='--index-map without stations')
+    ap.add_argument('--index-style', default='gswa', choices=['gswa', 'craton', 'plain'],
+                    help='--index-map colours: gswa = GSWA 500k unit colours (default); '
+                         'craton = tectonic domains + Yilgarn/Pilbara granite-greenstone; '
+                         'plain = tectonic domains only')
+    ap.add_argument('--index-plain', action='store_true',
+                    help='--index-map: tectonic colours only (no craton granite/greenstone)')
+    ap.add_argument('--tect-npz',  default=None, help='override tectonics npz')
+    ap.add_argument('--bnd-npz',   default=None, help='override crustal-boundaries npz')
     ap.add_argument('--out-dir',   default='figures/xsections')
     args = ap.parse_args()
+
+    global _GEO
+    geo_args = None
+    if args.no_strips:
+        args.strips = None
+    if args.index_only:
+        args.index_map = True
+    if args.strips and not args.index_only:
+        geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz)
+        _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")
     d = np.load(args.fvs, allow_pickle=True)
@@ -628,7 +859,24 @@ def main():
 
     # --- Index map (all lines on geology, numbered, distance ticks) ---
     if args.index_map:
-        _plot_index_map(d, sections, args.out_dir)
+        sta = None
+        if not args.no_stations:
+            try:
+                import config
+                sta_path, sta_cols = args.stations or config.STATIONS, config.STATION_COLS
+            except Exception:
+                sta_path, sta_cols = args.stations, (2, 1)
+            if sta_path and os.path.isfile(sta_path):
+                sta = _load_stations(sta_path, sta_cols)
+                print(f"  stations: {len(sta[0])} <- {sta_path}")
+            else:
+                print(f"  stations: file not found ({sta_path}) - none drawn")
+        _plot_index_map(d, sections, args.out_dir, tick_km=args.index_tick, stations=sta,
+                        style='plain' if args.index_plain else args.index_style,
+                        litho_npz=None if args.index_plain else
+                        _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
+        if args.index_only:
+            return
 
     # Stacked single-field figure (one page, all sections) — then return
     if args.stack:
@@ -636,7 +884,8 @@ def main():
         rmean=np.array([np.nanmean(d['Vsv'][:,zmask][:,k]) for k in range(zmask.sum())])
         plot_stack(d, sections, args.stack, args.out_dir, moho_file=args.moho,
                    ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
-                   ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax)
+                   ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax,
+                   ncolors=args.ncolors)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections
@@ -645,10 +894,13 @@ def main():
     for (la1,lo1,la2,lo2,_lab) in sections:
         _,_,dd = _great_circle_path(la1,lo1,la2,lo2, args.ds)
         maxd = max(maxd, dd[-1])
-    A4_PANEL_W = 10.0             # A4 landscape usable panel width (inches)
-    km_per_in  = maxd / A4_PANEL_W
-    panel_h_in = A4_PANEL_W / args.long_ratio   # longest = long_ratio:1 → shared height
-    print(f'Longest {maxd:.0f} km → {km_per_in:.0f} km/in, panel height {panel_h_in:.1f} in (longest {args.long_ratio:.1f}:1)')
+    zb = d['z'][d['z'] <= args.d_max][-1] if args.d_max else d['z'][-1]
+    ve = args.ve if args.ve else args.stack_ve
+    km_per_in, panel_h_in = _section_scale(maxd, zb, ve)
+    if args.long_ratio:                      # legacy: longest drawn long_ratio:1
+        panel_h_in = PAGE_W_IN / args.long_ratio
+    print(f'Longest {maxd:.0f} km → {km_per_in:.0f} km/in, panel height {panel_h_in:.2f} in '
+          f'(VE {km_per_in / (zb / panel_h_in):.1f}x)')
 
     # Full-model mean Vsv per depth → dln reference (regional, consistent)
     zmask = (d['z'] <= args.d_max) if args.d_max else np.ones(len(d['z']), bool)
@@ -658,7 +910,7 @@ def main():
     kw['max_dist']   = maxd
     kw['km_per_in']  = km_per_in
     kw['panel_h_in'] = panel_h_in
-    kw['long_ratio'] = args.long_ratio
+    kw['long_ratio'] = args.long_ratio or (PAGE_W_IN / panel_h_in)
     kw['ref_mean']   = ref_mean
 
     # --- Plot each section (optionally in parallel) ---
@@ -666,7 +918,8 @@ def main():
         from multiprocessing import Pool
         from functools import partial
         print(f"Plotting {len(sections)} sections on {args.nproc} cores ...")
-        worker = partial(_section_worker, fvs=args.fvs, moho=args.moho, kw=kw)
+        worker = partial(_section_worker, fvs=args.fvs, moho=args.moho, kw=kw,
+                         geo_args=geo_args)
         with Pool(args.nproc) as pool:
             pool.map(worker, sections)
     else:
@@ -674,9 +927,12 @@ def main():
             plot_section(d, *sec, **kw)
 
 
-def _section_worker(sec, fvs, moho, kw):
+def _section_worker(sec, fvs, moho, kw, geo_args=None):
     """Standalone worker for parallel section plotting (reloads Fvs per process)."""
     import numpy as np
+    global _GEO
+    if geo_args and _GEO is None:     # not inherited (spawn/forkserver start method)
+        _GEO = _load_geology(*geo_args)
     d = np.load(fvs, allow_pickle=True)
     plot_section._fvsname = fvs
     plot_section._moho_interp = None

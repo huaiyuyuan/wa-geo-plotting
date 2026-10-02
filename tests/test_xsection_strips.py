@@ -14,6 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plotting"))
 import xsection_strips as xs  # noqa: E402
 
 
+def objarr(items):
+    out = np.empty(len(items), dtype=object)
+    for i, x in enumerate(items):
+        out[i] = x
+    return out
+
+
 def box(x0, x1, y0, y1):
     return np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])
 
@@ -31,7 +38,7 @@ def make_index(with_inlier=True):
         rings.append(box(119.4, 119.6, -30.2, -29.8))
         colors.append(GRANITE)
         parents.append("granite inlier")
-    return xs.PolygonIndex(np.array(rings, dtype=object), colors, parents)
+    return xs.PolygonIndex(objarr(rings), colors, parents)
 
 
 def test_great_circle_distance():
@@ -73,7 +80,7 @@ def test_boundary_crossings_and_dedupe():
     ns_dup = ns + [0.005, 0.0]                         # same edge digitised twice
     far = np.array([[130.0, -33.0], [130.0, -27.0]])
     zig = np.array([[118.0, -31.0], [118.5, -29.0], [119.0, -31.0], [119.5, -29.0]])
-    bs = xs.BoundarySet(np.array([ns, ns_dup, far, zig], dtype=object),
+    bs = xs.BoundarySet(objarr([ns, ns_dup, far, zig]),
                         names=["Ida", "Ida", "far", "zig"])
     lon, lat, d = xs.great_circle_points(117.5, -30, 123.5, -30, step_km=2)
     cr = bs.crossings(lon, lat, d, dedupe_km=3)
@@ -86,7 +93,7 @@ def test_boundary_crossings_and_dedupe():
 
 def test_add_profile_strips_smoke(tmp_path=None):
     idx = make_index()
-    bs = xs.BoundarySet(np.array([np.array([[121.0, -33], [121.0, -27]])], dtype=object))
+    bs = xs.BoundarySet(objarr([np.array([[121.0, -33], [121.0, -27]])]))
     lon, lat, d = xs.great_circle_points(117.5, -30, 123.5, -30, step_km=10)
     fig, axs = plt.subplots(2, 1, figsize=(8, 5), sharex=True)
     axs[0].set_title("A-A'")
@@ -98,6 +105,33 @@ def test_add_profile_strips_smoke(tmp_path=None):
     fig.savefig(out, dpi=80)
     plt.close(fig)
     assert out.stat().st_size > 0
+
+
+def test_class_key_names_and_fallback(tmp_path=None):
+    import tempfile
+    td = Path(tmp_path or tempfile.mkdtemp())
+    rings = objarr([box(117, 120, -32, -28), box(120, 124, -32, -28)])
+    common = dict(rings=rings, colors=np.array(["#2ca02c"] * 2),
+                  parents=np.array(["Yilgarn Craton"] * 2))
+    np.savez(td / "with.npz", names=np.array(["Youanmi Terrane", "Kalgoorlie Terrane"]), **common)
+    np.savez(td / "without.npz", **common)
+    lon, lat = np.array([118.0, 122.0]), np.array([-30.0, -30.0])
+    t = xs.PolygonIndex.from_npz(td / "with.npz", class_key="names")
+    assert list(t.parents[t.sample(lon, lat)]) == ["Youanmi Terrane", "Kalgoorlie Terrane"]
+    assert t.colors[0] != t.colors[1]            # palette, not the shared craton colour
+    f = xs.PolygonIndex.from_npz(td / "without.npz", class_key="names")
+    assert set(f.parents) == {"Yilgarn Craton"}  # graceful fallback
+
+
+def test_left_title_moves_above_strips():
+    idx = make_index()
+    lon, lat, d = xs.great_circle_points(117.5, -30, 123.5, -30, step_km=10)
+    fig, ax = plt.subplots(figsize=(8, 3))
+    ax.set_title("Vsv (km/s)", loc="left", fontsize=9)
+    res = xs.add_profile_strips(ax, [ax], lon, lat, d, litho=idx)
+    assert ax.get_title(loc="left") == ""
+    assert res.strip_axes[-1].get_title(loc="left") == "Vsv (km/s)"
+    plt.close(fig)
 
 
 if __name__ == "__main__":

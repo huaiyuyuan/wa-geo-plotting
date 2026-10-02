@@ -130,9 +130,23 @@ class PolygonIndex:
         self._paths: dict[int, Path] = {}
 
     @classmethod
-    def from_npz(cls, path):
+    def from_npz(cls, path, class_key="parents"):
+        """Load a litho/tectonic npz.
+
+        class_key="parents" uses the stored grouping and its colours.
+        Any other per-ring key (e.g. "names" = TECTNAME, written by the updated
+        extract scripts) becomes the class, coloured from a qualitative palette.
+        Falls back to "parents" with a warning if the key is missing.
+        """
         d = np.load(path, allow_pickle=True)
-        return cls(d["rings"], d["colors"], d["parents"])
+        if class_key != "parents" and class_key not in d.files:
+            print(f"  ({path}: no '{class_key}' array, using 'parents'; "
+                  f"re-run the extract script to add it)")
+            class_key = "parents"
+        if class_key == "parents":
+            return cls(d["rings"], d["colors"], d["parents"])
+        names = np.asarray(d[class_key]).astype(str)
+        return cls(d["rings"], palette_for(names), names)
 
     def _path(self, k):
         p = self._paths.get(k)
@@ -177,6 +191,17 @@ class PolygonIndex:
                     best, best_area = k, self.area[k]
             out[i] = best
         return out
+
+
+_PALETTE = ("#c6dbef", "#fdd0a2", "#c7e9c0", "#dadaeb", "#fcbba1", "#d9d9d9",
+            "#fee391", "#9ecae1", "#a1d99b", "#bcbddc", "#fdae6b", "#ccebc5",
+            "#f2f0f7", "#ffffcc", "#b3cde3", "#decbe4")
+
+
+def palette_for(names):
+    """Stable pastel colour per unique name (same name -> same colour everywhere)."""
+    import zlib
+    return np.array([_PALETTE[zlib.crc32(n.encode()) % len(_PALETTE)] for n in names])
 
 
 @dataclass
@@ -229,6 +254,9 @@ class BoundarySet:
     def from_npz(cls, path):
         d = np.load(path, allow_pickle=True)
         names = d["names"] if "names" in d.files else None
+        if names is None:
+            print(f"  ({path}: no 'names' array; re-run extract/make_boundaries.py "
+                  f"to label crossings)")
         return cls(d["lines"], names)
 
     def crossings(self, lon, lat, dist, dedupe_km=3.0, pad_deg=0.2):
@@ -295,6 +323,45 @@ def strip_axes_above(ax, height_in=0.14, gap_in=0.03, level=0):
     return sax
 
 
+def _move_titles(src, dst, pad=2.0):
+    """Move left/centre/right titles from src to dst, keeping their font size."""
+    for loc, artist in (("left", src._left_title), ("center", src.title),
+                        ("right", src._right_title)):
+        t = artist.get_text()
+        if t:
+            fs = artist.get_fontsize()
+            src.set_title("", loc=loc)
+            dst.set_title(t, loc=loc, fontsize=fs, pad=pad)
+
+
+_SHORTEN = (" Superterrane", " Terrane", " Province", " Domain", " Zone")
+
+
+def _shorten(name):
+    for suf in _SHORTEN:
+        name = name.replace(suf, "")
+    return name
+
+
+def annotate_runs(sax, runs, fontsize=6, min_km=0.0):
+    """Write each run's name inside it when the text fits (tries a shortened
+    form without 'Terrane'/'Province'/... if the full name does not)."""
+    fig = sax.figure
+    w_in = sax.get_position().width * fig.get_figwidth()
+    span = (runs[-1].d1 - runs[0].d0) if runs else 1.0
+    tr = blended_transform_factory(sax.transData, sax.transAxes)
+    for rn in runs:
+        if not rn.name or rn.d1 - rn.d0 < min_km:
+            continue
+        run_in = (rn.d1 - rn.d0) / span * w_in
+        for txt in (rn.name, _shorten(rn.name)):
+            if len(txt) * fontsize * 0.55 / 72 < run_in * 0.92:
+                sax.text(0.5 * (rn.d0 + rn.d1), 0.5, txt, transform=tr, ha="center",
+                         va="center", fontsize=fontsize, clip_on=True, zorder=8,
+                         bbox=dict(fc=rn.color, ec="none", pad=0.6))
+                break
+
+
 def draw_strip(sax, runs, label=None, label_fontsize=7):
     for rn in runs:
         if rn.name:
@@ -304,9 +371,25 @@ def draw_strip(sax, runs, label=None, label_fontsize=7):
                  va="center", fontsize=label_fontsize)
 
 
+def _label_groups(crossings, km_per_in, min_sep_in=0.35):
+    """Group named crossings closer than min_sep_in (on paper) so each group gets
+    ONE label at its first crossing, listing each distinct name once."""
+    groups = []
+    for c in crossings:
+        if not c.names:
+            continue
+        if groups and (c.dist - groups[-1][0]) / km_per_in < min_sep_in:
+            for n in c.names:
+                if n not in groups[-1][1]:
+                    groups[-1][1].append(n)
+        else:
+            groups.append([c.dist, list(c.names)])
+    return groups
+
+
 def draw_boundaries(axes, crossings, strip_axes=(), color="k", lw=0.8,
                     ls=(0, (4, 3)), alpha=0.75, marker_size=5, label_names=False,
-                    name_fontsize=6):
+                    name_fontsize=6, span_km=None, min_sep_in=0.35):
     """Dashed lines through every panel, solid ticks through the strips,
     and a small triangle on top of the uppermost strip."""
     for ax in axes:
@@ -321,10 +404,15 @@ def draw_boundaries(axes, crossings, strip_axes=(), color="k", lw=0.8,
         for c in crossings:
             top.plot(c.dist, 1.0, marker="v", ms=marker_size, color=color,
                      transform=tr, clip_on=False, zorder=7)
-            if label_names and c.names:
-                top.text(c.dist, 1.0 + 0.9, " / ".join(c.names), transform=tr,
-                         rotation=90, ha="center", va="bottom",
-                         fontsize=name_fontsize, clip_on=False)
+        if label_names:
+            w_in = top.get_position().width * top.figure.get_figwidth()
+            if span_km is None:
+                span_km = abs(np.diff(top.get_xlim())[0])
+            for d0, names in _label_groups(crossings, span_km / w_in, min_sep_in):
+                top.annotate(" / ".join(names), (d0, 1.0), xycoords=tr,
+                             xytext=(1, marker_size + 1), textcoords="offset points",
+                             rotation=35, ha="left", va="bottom",
+                             fontsize=name_fontsize, annotation_clip=False)
 
 
 def legend_handles(all_runs, min_km=0.0, max_items=None):
@@ -351,7 +439,7 @@ class StripResult:
 def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
                        tectonic=None, boundaries=None, step_km=0.5,
                        height_in=0.14, gap_in=0.03, labels=True,
-                       label_boundaries=False, dedupe_km=3.0):
+                       label_domains=True, label_boundaries=False, dedupe_km=3.0):
     """One-call entry point for plot_xsection.
 
     top_ax      the uppermost Vs panel of the section (strips go above it)
@@ -369,17 +457,18 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
         r = runs_from_samples(d_f, index.sample(lon_f, lat_f), index)
         sax = strip_axes_above(top_ax, height_in, gap_in, level=len(strips))
         draw_strip(sax, r, label=lab if labels else None)
+        if key == "tectonic" and label_domains:
+            annotate_runs(sax, r)
         strips.append(sax)
         runs[key] = r
     crossings = []
     if boundaries is not None:
         crossings = boundaries.crossings(lon_f, lat_f, d_f, dedupe_km=dedupe_km)
         draw_boundaries(panel_axes, crossings, strip_axes=strips,
-                        label_names=label_boundaries)
-    # Keep the panel title above the strips rather than under them.
-    title = top_ax.get_title()
-    if strips and title:
-        top_ax.set_title("")
-        strips[-1].set_title(title)
+                        label_names=label_boundaries, span_km=dist[-1] - dist[0])
+    # Keep the panel title(s) above the strips (and boundary names) rather than under them.
+    if strips:
+        _move_titles(top_ax, strips[-1],
+                     pad=26.0 if (label_boundaries and crossings) else 2.0)
     top_ax.set_xlim(dist[0], dist[-1])
     return StripResult(strips, runs, crossings)

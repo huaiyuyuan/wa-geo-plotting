@@ -85,17 +85,165 @@ def add_tectonic_outlines(ax, edgecolor='k', lw=0.4, alpha=0.6, zorder=8,
     return lc
 
 
-def tectonic_legend(ax, loc='lower left', fontsize=7, ncol=1):
-    """Add a legend of the major tectonic domains actually colored."""
+CRATONS = ('Yilgarn Craton', 'Pilbara Craton')   # granite-greenstone cratons only
+CRATON_LITHO = {                          # make_litho key -> short label (draw order)
+    'granitic rocks': 'Granite',
+    'granite-greenstones': 'Granite-greenstone',
+    'greenstones': 'Greenstone',
+    'mafic/ultramafic intrusive/extrusive rocks': 'Mafic/ultramafic',
+}
+
+
+def _ring_path(rings):
+    """One compound Path from many rings (for clipping)."""
+    from matplotlib.path import Path
+    verts, codes = [], []
+    for r in rings:
+        r = np.asarray(r, float)[:, :2]
+        if len(r) < 3:
+            continue
+        verts += list(r) + [r[0]]
+        codes += [Path.MOVETO] + [Path.LINETO] * (len(r) - 1) + [Path.CLOSEPOLY]
+    return Path(np.array(verts), codes)
+
+
+def _in_box(r, clip_box):
+    if clip_box is None:
+        return True
+    lo0, lo1, la0, la1 = clip_box
+    return not (r[:, 0].max() < lo0 or r[:, 0].min() > lo1 or
+                r[:, 1].max() < la0 or r[:, 1].min() > la1)
+
+
+def add_craton_geology(ax, litho_npz, cratons=CRATONS, classes=CRATON_LITHO,
+                       alpha=0.95, zorder=1, transform=None, clip_box=None,
+                       clip_to_cratons=True):
+    """GSWA 500k granite + mafic/greenstone/granite-greenstone polygons, drawn
+    only inside the given cratons (default Yilgarn + Pilbara), as in plot_fig1.
+    These are the real 500k polygons, not a solid fill: everything else (cover
+    basins, orogens, other lithologies) keeps its tectonic-domain colour.
+    Returns [(label, colour)] actually drawn, for the legend."""
     d = _load()
-    keys = d['parent_color_keys']; vals = d['parent_color_vals']
+    names = d['names'] if 'names' in d.files else [''] * len(d['rings'])
+    craton_rings = [np.asarray(r) for r, p, n in zip(d['rings'], d['parents'], names)
+                    if (p in cratons or n in cratons) and len(r) >= 3
+                    and _in_box(np.asarray(r), clip_box)]
+    kw = {'transform': transform} if transform is not None else {}
+    L = np.load(litho_npz, allow_pickle=True)
+    order = {k: i for i, k in enumerate(classes)}
+    items = []
+    for r, c, p in zip(L['rings'], L['colors'], L['parents']):
+        p = str(p)
+        if p not in classes:
+            continue
+        r = np.asarray(r)
+        if len(r) < 3 or not _in_box(r, clip_box):
+            continue
+        items.append((order[p], r, c, p))
+    items.sort(key=lambda t: t[0])           # granite first, greens on top
+    if not items:
+        return []
+    pc = PatchCollection([MplPoly(r, closed=True) for _, r, _, _ in items],
+                         facecolor=[c for _, _, c, _ in items], edgecolor='0.45',
+                         linewidths=0.08, alpha=alpha, zorder=zorder, **kw)
+    ax.add_collection(pc)
+    if clip_to_cratons and craton_rings:
+        from matplotlib.patches import PathPatch
+        t = transform._as_mpl_transform(ax) if transform is not None else ax.transData
+        pc.set_clip_path(PathPatch(_ring_path(craton_rings), transform=t))
+    seen = {p: c for _, _, c, p in items}
+    return [(classes[k], seen[k]) for k in classes if k in seen]
+
+
+def has_gswa_colours(litho_npz):
+    """True if the 500k npz carries parsed GSWA unit colours (tect_colors)."""
+    try:
+        d = np.load(litho_npz, allow_pickle=True)
+        return 'tect_colors' in d.files and any(str(c) for c in d['tect_colors'])
+    except Exception:
+        return False
+
+
+def add_gswa_units(ax, litho_npz, transform=None, clip_box=None, zorder=1,
+                   alpha=1.0, edgecolor='k', lw=0.12):
+    """GSWA 1:500k tectonic units in GSWA's own map colours (TECTCOLOUR), with
+    thin black unit outlines, like GeoVIEW. Each record is one compound path, so
+    holes are real holes and inliers show through. Units with no parsable colour
+    use their lithology colour."""
+    from matplotlib.path import Path
+    from matplotlib.collections import PathCollection
+    d = np.load(litho_npz, allow_pickle=True)
+    rings = d['rings']
+    tcol = d['tect_colors'] if 'tect_colors' in d.files else [''] * len(rings)
+    fcol = d['colors']
+    rec = d['rec_idx'] if 'rec_idx' in d.files else np.arange(len(rings))
+    groups = {}
+    for i, r in enumerate(rings):
+        r = np.asarray(r, float)[:, :2]
+        if len(r) < 3 or not _in_box(r, clip_box):
+            continue
+        groups.setdefault(int(rec[i]), []).append(i)
+    paths, cols, areas = [], [], []
+    for _, idx in groups.items():
+        verts, codes = [], []
+        for i in idx:
+            r = np.asarray(rings[i], float)[:, :2]
+            verts += list(r) + [r[0]]
+            codes += [Path.MOVETO] + [Path.LINETO] * (len(r) - 1) + [Path.CLOSEPOLY]
+        paths.append(Path(np.array(verts), codes))
+        c = str(tcol[idx[0]]) or str(fcol[idx[0]])
+        cols.append(c)
+        r0 = np.asarray(rings[idx[0]], float)
+        areas.append(np.ptp(r0[:, 0]) * np.ptp(r0[:, 1]))
+    order = np.argsort(areas)[::-1]          # big first: any residual overlap -> small on top
+    kw = {'transform': transform} if transform is not None else {}
+    pc = PathCollection([paths[i] for i in order], facecolors=[cols[i] for i in order],
+                        edgecolors=edgecolor, linewidths=lw, alpha=alpha, zorder=zorder, **kw)
+    ax.add_collection(pc)
+    return pc
+
+
+def tectonic_legend(ax, loc='lower left', fontsize=7, ncol=1, clip_box=None,
+                    exclude=('STATE',), litho=None):
+    """Legend of the major tectonic domains.
+    clip_box=(lonmin,lonmax,latmin,latmax): list only domains that have a polygon
+    in that extent (i.e. what is actually visible on the map). exclude: keys never
+    listed (STATE is the state outline, not a domain)."""
+    d = _load()
+    keys = list(d['parent_color_keys']); vals = list(d['parent_color_vals'])
+    if clip_box is not None:
+        lo0, lo1, la0, la1 = clip_box
+        seen = set()
+        for r, p in zip(d['rings'], d['parents']):
+            if len(r) < 3 or p in seen:
+                continue
+            if not (r[:, 0].max() < lo0 or r[:, 0].min() > lo1 or
+                    r[:, 1].max() < la0 or r[:, 1].min() > la1):
+                seen.add(str(p))
+        keep = [i for i, k in enumerate(keys) if k in seen]
+    else:
+        keep = range(len(keys))
     from matplotlib.patches import Patch
-    handles = [Patch(facecolor=v, edgecolor='k', lw=0.3, label=k)
-               for k,v in zip(keys, vals)]
-    ax.legend(handles=handles, loc=loc, fontsize=fontsize, ncol=ncol,
-              framealpha=0.92, title='Tectonic domain', title_fontsize=fontsize+2,
-              handlelength=1.6, handleheight=1.3, labelspacing=0.5,
-              borderpad=0.7)
+    handles = [Patch(facecolor=vals[i], edgecolor='k', lw=0.3, label=keys[i])
+               for i in keep if keys[i] not in exclude]
+    headers = []
+    if litho:   # [(label, colour)] from add_craton_geology: two titled groups
+        blank = lambda t: Patch(visible=False, label=t)
+        handles = ([blank('Yilgarn & Pilbara - lithology (GSWA 500k)')]
+                   + [Patch(facecolor=c, edgecolor='k', lw=0.3, label=l) for l, c in litho]
+                   + [blank('Tectonic domain')] + handles)
+        headers = [0, len(litho) + 1]
+    leg = ax.legend(handles=handles, loc=loc, fontsize=fontsize, ncol=ncol,
+                    framealpha=0.92, title=None if litho else 'Tectonic domain',
+                    title_fontsize=fontsize + 1,
+                    handlelength=1.4, handleheight=1.0, labelspacing=0.35,
+                    borderpad=0.5, handletextpad=0.5)
+    for i in headers:   # group titles: bold, pulled left over the (hidden) swatch
+        t = leg.get_texts()[i]
+        t.set_fontweight('bold'); t.set_fontsize(fontsize + 0.5)
+        t.set_position((-(1.4 + 0.5) * fontsize, 0))
+    return leg
+
 
 if __name__ == '__main__':
     # Test render: Fig-1 style base map over WA
