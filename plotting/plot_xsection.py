@@ -249,13 +249,25 @@ def _cmap(name, n=32):
         return plt.cm.get_cmap(name, n)
 
 
+# ── Moho overlay: dashed line + optional grey mask below it ───────────────────
+def _draw_moho(ax, dist, moho, zbot, mask_alpha=0.5, lw=1.1):
+    """Dashed Moho; with mask_alpha (0-1) a grey veil from the Moho down to zbot
+    (the bottom of the plotted depth range), so the crust stands out."""
+    moho = np.asarray(moho, float)
+    if mask_alpha:
+        ok = np.isfinite(moho)
+        ax.fill_between(dist, np.where(ok, np.minimum(moho, zbot), zbot), zbot,
+                        where=ok, color='0.5', alpha=mask_alpha, lw=0, zorder=2)
+    ax.plot(dist, moho, 'k--', lw=lw, alpha=0.7, zorder=3)
+
+
 # ── Single cross-section ──────────────────────────────────────────────────────
 def plot_section(d, lat1, lon1, lat2, lon2, label,
                  ds_deg=0.08, ncolors=16, d_max=None,
                  sigma_vsv=1.5, clim_rel=6.0,
                  out_dir='figures/xsections',
                  max_dist=None, km_per_in=None, panel_h_in=None, ref_mean=None,
-                 long_ratio=3.0):
+                 long_ratio=3.0, moho_mask=0.5):
     """One cross-section. Panels: Vsv/Viso | dlnVsv | [xi] | uncertainty (no misfit).
     Scale is set by the LONGEST section (drawn 2:1 per panel, full landscape width);
     km_per_in and panel_h_in are computed once from it and passed to every section so
@@ -347,7 +359,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
         cb.set_label(clabel, fontsize=8); cb.ax.tick_params(labelsize=7)
         if title: ax.set_title(title, fontsize=9, loc='left')
         if moho_prof is not None:
-            ax.plot(dist, moho_prof, 'k--', lw=1.1, alpha=0.7)
+            _draw_moho(ax, dist, moho_prof, zbot, moho_mask, lw=1.1)
         return im
 
     r = 0
@@ -603,7 +615,7 @@ def _load_sections(path):
 def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
-               ve=DEFAULT_VE, vmin=None, vmax=None):
+               ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5):
     """Stack ONE field for all sections on a single page. Rows = sections, same
     height, width proportional to length, longest spans the full page width.
     ve = vertical exaggeration (depth stretched x this; 1 = true scale, flat;
@@ -701,7 +713,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                 fontsize=8,fontweight='bold',va='top',
                 bbox=dict(fc='white',ec='none',alpha=0.7,pad=1))
         if p['moho'] is not None:
-            ax.plot(p['dist'],p['moho'],'k--',lw=0.9,alpha=0.7)
+            _draw_moho(ax, p['dist'], p['moho'], zbot, moho_mask, lw=0.9)
         if i==n-1: ax.set_xlabel('Distance (km)',fontsize=8)
         # per-panel colorbar immediately right of THIS panel
         cax=fig.add_axes([0.08+w+0.008, y0, 0.012, rh])
@@ -746,6 +758,9 @@ def main():
                          'Click pairs of points (start,end) — Enter to finish.')
     ap.add_argument('--moho',      default=None,
                     help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
+    ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
+                    help='grey veil below the Moho to the bottom of the section (0-1, default 0.5)')
+    ap.add_argument('--no-moho-mask', action='store_true', help='Moho line only, no grey veil')
     ap.add_argument('--save-sections', default=None,
                     help='Save picked/used section list to this file')
     ap.add_argument('--load-sections', default=None,
@@ -822,9 +837,10 @@ def main():
     print(f"  {len(d['Lon'])} nodes, {len(d['z'])} depth levels "
           f"({d['z'][0]:.1f}-{d['z'][-1]:.1f} km)")
 
+    moho_mask = None if args.no_moho_mask else args.moho_mask_alpha
     kw = dict(ds_deg=args.ds, ncolors=args.ncolors, d_max=args.d_max,
               sigma_vsv=args.sigma_vsv, clim_rel=args.clim_rel,
-              out_dir=args.out_dir)
+              out_dir=args.out_dir, moho_mask=moho_mask)
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
     sections = []
@@ -885,7 +901,8 @@ def main():
         plot_stack(d, sections, args.stack, args.out_dir, moho_file=args.moho,
                    ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
                    ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax,
-                   ncolors=args.ncolors)
+                   ncolors=args.ncolors,
+                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections
