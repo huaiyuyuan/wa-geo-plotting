@@ -1,0 +1,385 @@
+"""Surface-geology strips for cross-sections.
+
+For each profile this module
+  1. samples surface lithology (or tectonic domains) at points along the
+     profile with a point-in-polygon test, and
+  2. finds where MajorCrustalBoundaries polylines cross the profile,
+then draws a thin colour strip above the top Vs panel and dashed vertical
+lines through every panel at the boundary crossings.
+
+It only needs numpy + matplotlib and reads the npz files written by extract/:
+
+  polygons  (make_litho.py, make_tectonic_basemap.py)
+      rings    object array of (N, 2) lon/lat arrays
+      colors   per-ring colour (any matplotlib colour spec)
+      parents  per-ring class name (LITHOLOGY, or PARENTNAME for tectonics)
+  boundaries (make_boundaries.py)
+      lines    object array of (N, 2) lon/lat polylines
+      names    optional per-line name
+
+All distances are in km along the profile, matching the x axis of the
+cross-section panels.
+
+GSWA data (c) Geological Survey of Western Australia, CC-BY-4.0.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+import matplotlib.colors as mcolors
+from matplotlib.patches import Patch
+from matplotlib.path import Path
+from matplotlib.transforms import blended_transform_factory
+
+R_EARTH = 6371.0
+
+
+# --------------------------------------------------------------------------
+# Profile geometry
+# --------------------------------------------------------------------------
+def _xyz(lon, lat):
+    lon, lat = np.radians(lon), np.radians(lat)
+    return np.stack([np.cos(lat) * np.cos(lon),
+                     np.cos(lat) * np.sin(lon),
+                     np.sin(lat)], axis=-1)
+
+
+def _lonlat(xyz):
+    x, y, z = xyz[..., 0], xyz[..., 1], xyz[..., 2]
+    return np.degrees(np.arctan2(y, x)), np.degrees(np.arctan2(z, np.hypot(x, y)))
+
+
+def great_circle_points(lon1, lat1, lon2, lat2, step_km=1.0, n=None):
+    """Evenly spaced points on the great circle; returns lon, lat, dist_km."""
+    p1, p2 = _xyz(lon1, lat1), _xyz(lon2, lat2)
+    omega = float(np.arccos(np.clip(np.dot(p1, p2), -1.0, 1.0)))
+    total = omega * R_EARTH
+    if n is None:
+        n = max(2, int(np.ceil(total / step_km)) + 1)
+    f = np.linspace(0.0, 1.0, n)
+    if omega < 1e-12:
+        pts = np.repeat(p1[None], n, axis=0)
+    else:
+        pts = (np.sin((1 - f) * omega)[:, None] * p1
+               + np.sin(f * omega)[:, None] * p2) / np.sin(omega)
+    lon, lat = _lonlat(pts)
+    return lon, lat, f * total
+
+
+def along_track_km(lon, lat):
+    """Cumulative great-circle distance along a polyline (km)."""
+    p = _xyz(np.asarray(lon, float), np.asarray(lat, float))
+    seg = np.arccos(np.clip(np.sum(p[1:] * p[:-1], axis=1), -1.0, 1.0)) * R_EARTH
+    return np.concatenate([[0.0], np.cumsum(seg)])
+
+
+def resample_profile(lon, lat, dist, step_km=0.5):
+    """Densify a profile to a fixed spacing for sampling the strip.
+
+    The cross-section's own points are often several km apart, which is too
+    coarse for 1:500k lithology; this interpolates along the existing
+    polyline so the strip x axis stays identical to the panels'.
+    """
+    dist = np.asarray(dist, float)
+    n = max(2, int(np.ceil((dist[-1] - dist[0]) / step_km)) + 1)
+    d = np.linspace(dist[0], dist[-1], n)
+    return np.interp(d, dist, lon), np.interp(d, dist, lat), d
+
+
+def _local_xy(lon, lat, lon0, lat0):
+    """Azimuthal-equidistant projection (km) about (lon0, lat0)."""
+    lam = np.radians(np.asarray(lon, float) - lon0)
+    phi, phi0 = np.radians(np.asarray(lat, float)), np.radians(lat0)
+    cosc = np.clip(np.sin(phi0) * np.sin(phi)
+                   + np.cos(phi0) * np.cos(phi) * np.cos(lam), -1.0, 1.0)
+    c = np.arccos(cosc)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        k = np.where(c < 1e-12, 1.0, c / np.sin(c))
+    x = R_EARTH * k * np.cos(phi) * np.sin(lam)
+    y = R_EARTH * k * (np.cos(phi0) * np.sin(phi)
+                       - np.sin(phi0) * np.cos(phi) * np.cos(lam))
+    return np.column_stack([x, y])
+
+
+# --------------------------------------------------------------------------
+# Polygon sampling (lithology / tectonic domains)
+# --------------------------------------------------------------------------
+class PolygonIndex:
+    """Point-in-polygon lookup over the rings of a litho/tectonic npz.
+
+    Rings in the npz are not tagged as outer or hole, so containment is
+    resolved per class by parity: a point is inside class C when it falls
+    inside an odd number of C's rings (a hole stored as a ring of its parent
+    cancels the outer ring). Among the classes that pass, the one whose
+    smallest containing ring is smallest wins, so inliers beat the polygon
+    they sit in.
+    """
+
+    def __init__(self, rings, colors, parents):
+        self.rings = [np.asarray(r, float)[:, :2] for r in rings]
+        self.colors = np.array([mcolors.to_hex(mcolors.to_rgba(c), keep_alpha=True)
+                                for c in colors])
+        self.parents = np.asarray(parents).astype(str)
+        b = np.array([[r[:, 0].min(), r[:, 0].max(), r[:, 1].min(), r[:, 1].max()]
+                      for r in self.rings])
+        self.xmin, self.xmax, self.ymin, self.ymax = b.T
+        self.area = np.array([0.5 * abs(np.dot(r[:, 0], np.roll(r[:, 1], 1))
+                                        - np.dot(r[:, 1], np.roll(r[:, 0], 1)))
+                              for r in self.rings])
+        self._paths: dict[int, Path] = {}
+
+    @classmethod
+    def from_npz(cls, path):
+        d = np.load(path, allow_pickle=True)
+        return cls(d["rings"], d["colors"], d["parents"])
+
+    def _path(self, k):
+        p = self._paths.get(k)
+        if p is None:
+            p = self._paths[k] = Path(self.rings[k])
+        return p
+
+    def sample(self, lon, lat):
+        """Ring index chosen for each point, -1 where no polygon contains it."""
+        lon = np.asarray(lon, float)
+        lat = np.asarray(lat, float)
+        pts = np.column_stack([lon, lat])
+        cand = np.flatnonzero((self.xmax >= lon.min()) & (self.xmin <= lon.max())
+                              & (self.ymax >= lat.min()) & (self.ymin <= lat.max()))
+        hits: list[list[int]] = [[] for _ in range(lon.size)]
+        for k in cand:
+            m = ((lon >= self.xmin[k]) & (lon <= self.xmax[k])
+                 & (lat >= self.ymin[k]) & (lat <= self.ymax[k]))
+            if not m.any():
+                continue
+            ii = np.flatnonzero(m)
+            inside = self._path(k).contains_points(pts[ii])
+            for i in ii[inside]:
+                hits[i].append(k)
+
+        out = np.full(lon.size, -1, dtype=int)
+        for i, ks in enumerate(hits):
+            if not ks:
+                continue
+            if len(ks) == 1:
+                out[i] = ks[0]
+                continue
+            by_class: dict[str, list[int]] = {}
+            for k in ks:
+                by_class.setdefault(self.parents[k], []).append(k)
+            best, best_area = -1, np.inf
+            for members in by_class.values():
+                if len(members) % 2 == 0:  # inside a hole of this class
+                    continue
+                k = min(members, key=lambda j: self.area[j])
+                if self.area[k] < best_area:
+                    best, best_area = k, self.area[k]
+            out[i] = best
+        return out
+
+
+@dataclass
+class Run:
+    d0: float
+    d1: float
+    name: str
+    color: str
+
+
+def runs_from_samples(dist, idx, index: PolygonIndex, none_color="#ffffff00"):
+    """Collapse per-point samples into contiguous same-class runs.
+
+    Run edges sit halfway between samples, so the runs tile the profile
+    exactly from dist[0] to dist[-1].
+    """
+    dist = np.asarray(dist, float)
+    names = np.where(idx >= 0, index.parents[np.maximum(idx, 0)], "")
+    cols = np.where(idx >= 0, index.colors[np.maximum(idx, 0)], none_color)
+    edges = np.concatenate([[dist[0]], 0.5 * (dist[1:] + dist[:-1]), [dist[-1]]])
+    runs, start = [], 0
+    for i in range(1, len(dist) + 1):
+        if i == len(dist) or names[i] != names[start] or cols[i] != cols[start]:
+            runs.append(Run(edges[start], edges[i], names[start], cols[start]))
+            start = i
+    return runs
+
+
+# --------------------------------------------------------------------------
+# Boundary crossings
+# --------------------------------------------------------------------------
+@dataclass
+class Crossing:
+    dist: float
+    names: list = field(default_factory=list)
+
+
+class BoundarySet:
+    """Crustal-boundary polylines with a profile-intersection test."""
+
+    def __init__(self, lines, names=None):
+        self.lines = [np.asarray(l, float)[:, :2] for l in lines]
+        self.names = (np.asarray(names).astype(str) if names is not None
+                      else np.array([""] * len(self.lines)))
+        b = np.array([[l[:, 0].min(), l[:, 0].max(), l[:, 1].min(), l[:, 1].max()]
+                      for l in self.lines])
+        self.xmin, self.xmax, self.ymin, self.ymax = b.T
+
+    @classmethod
+    def from_npz(cls, path):
+        d = np.load(path, allow_pickle=True)
+        names = d["names"] if "names" in d.files else None
+        return cls(d["lines"], names)
+
+    def crossings(self, lon, lat, dist, dedupe_km=3.0, pad_deg=0.2):
+        """Where boundary polylines cross the profile.
+
+        Intersections are found in an azimuthal-equidistant frame centred on
+        the profile, then mapped back to along-profile distance using the
+        profile's own dist array. Crossings closer than dedupe_km are merged,
+        because shared terrane edges are often digitised more than once.
+        """
+        lon, lat, dist = (np.asarray(a, float) for a in (lon, lat, dist))
+        mid = len(lon) // 2
+        lon0, lat0 = lon[mid], lat[mid]
+        P = _local_xy(lon, lat, lon0, lat0)
+        p, r = P[:-1], P[1:] - P[:-1]                     # (M, 2)
+        cand = np.flatnonzero((self.xmax >= lon.min() - pad_deg)
+                              & (self.xmin <= lon.max() + pad_deg)
+                              & (self.ymax >= lat.min() - pad_deg)
+                              & (self.ymin <= lat.max() + pad_deg))
+        found = []
+        for k in cand:
+            Q = _local_xy(self.lines[k][:, 0], self.lines[k][:, 1], lon0, lat0)
+            q, s = Q[:-1], Q[1:] - Q[:-1]                 # (K, 2)
+            denom = r[:, None, 0] * s[None, :, 1] - r[:, None, 1] * s[None, :, 0]
+            qp = q[None, :, :] - p[:, None, :]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t = (qp[..., 0] * s[None, :, 1] - qp[..., 1] * s[None, :, 0]) / denom
+                u = (qp[..., 0] * r[:, None, 1] - qp[..., 1] * r[:, None, 0]) / denom
+            ok = (np.abs(denom) > 1e-12) & (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)
+            for i, j in zip(*np.nonzero(ok)):
+                found.append((dist[i] + t[i, j] * (dist[i + 1] - dist[i]),
+                              self.names[k]))
+        found.sort()
+        merged: list[Crossing] = []
+        for d, name in found:
+            if merged and d - merged[-1].dist < dedupe_km:
+                if name and name not in merged[-1].names:
+                    merged[-1].names.append(name)
+                continue
+            merged.append(Crossing(d, [name] if name else []))
+        return merged
+
+
+# --------------------------------------------------------------------------
+# Drawing
+# --------------------------------------------------------------------------
+def strip_axes_above(ax, height_in=0.14, gap_in=0.03, level=0):
+    """Thin axes above `ax` sharing its x axis; level=1 stacks above level 0.
+
+    Uses inset_axes in axes-fraction coordinates so it works with any layout
+    the cross-section script already uses (gridspec, per-panel colorbars,
+    stacked sections), without shrinking the Vs panel.
+    """
+    fig = ax.figure
+    ax.apply_aspect()  # settle fixed-aspect panels (--stack-ve) before sizing
+    h_ax_in = ax.get_position().height * fig.get_figheight()
+    h, g = height_in / h_ax_in, gap_in / h_ax_in
+    sax = ax.inset_axes([0.0, 1.0 + g + level * (h + g), 1.0, h], sharex=ax)
+    sax.set_yticks([])
+    sax.set_ylim(0, 1)
+    sax.tick_params(axis="x", bottom=False, labelbottom=False)
+    for sp in sax.spines.values():
+        sp.set_linewidth(0.6)
+    return sax
+
+
+def draw_strip(sax, runs, label=None, label_fontsize=7):
+    for rn in runs:
+        if rn.name:
+            sax.axvspan(rn.d0, rn.d1, ymin=0, ymax=1, color=rn.color, lw=0)
+    if label:
+        sax.text(-0.005, 0.5, label, transform=sax.transAxes, ha="right",
+                 va="center", fontsize=label_fontsize)
+
+
+def draw_boundaries(axes, crossings, strip_axes=(), color="k", lw=0.8,
+                    ls=(0, (4, 3)), alpha=0.75, marker_size=5, label_names=False,
+                    name_fontsize=6):
+    """Dashed lines through every panel, solid ticks through the strips,
+    and a small triangle on top of the uppermost strip."""
+    for ax in axes:
+        for c in crossings:
+            ax.axvline(c.dist, color=color, lw=lw, ls=ls, alpha=alpha, zorder=6)
+    for sax in strip_axes:
+        for c in crossings:
+            sax.axvline(c.dist, color=color, lw=lw * 1.2, zorder=6)
+    if strip_axes and marker_size:
+        top = strip_axes[-1]
+        tr = blended_transform_factory(top.transData, top.transAxes)
+        for c in crossings:
+            top.plot(c.dist, 1.0, marker="v", ms=marker_size, color=color,
+                     transform=tr, clip_on=False, zorder=7)
+            if label_names and c.names:
+                top.text(c.dist, 1.0 + 0.9, " / ".join(c.names), transform=tr,
+                         rotation=90, ha="center", va="bottom",
+                         fontsize=name_fontsize, clip_on=False)
+
+
+def legend_handles(all_runs, min_km=0.0, max_items=None):
+    """Patches for the classes seen along the profiles, longest first."""
+    total: dict[tuple, float] = {}
+    for runs in all_runs:
+        for rn in runs:
+            if rn.name:
+                key = (rn.name, rn.color)
+                total[key] = total.get(key, 0.0) + (rn.d1 - rn.d0)
+    items = sorted((v, k) for k, v in total.items() if v >= min_km)[::-1]
+    if max_items:
+        items = items[:max_items]
+    return [Patch(facecolor=c, edgecolor="none", label=n) for _, (n, c) in items]
+
+
+@dataclass
+class StripResult:
+    strip_axes: list
+    runs: dict          # {"litho": [Run...], "tectonic": [...]}
+    crossings: list     # [Crossing...]
+
+
+def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
+                       tectonic=None, boundaries=None, step_km=0.5,
+                       height_in=0.14, gap_in=0.03, labels=True,
+                       label_boundaries=False, dedupe_km=3.0):
+    """One-call entry point for plot_xsection.
+
+    top_ax      the uppermost Vs panel of the section (strips go above it)
+    panel_axes  every panel of the section (boundary lines go through all)
+    lon, lat, dist  the profile exactly as plotted (dist = panel x axis, km)
+    litho, tectonic  PolygonIndex or None; drawn bottom-up in that order
+    boundaries  BoundarySet or None
+    """
+    lon_f, lat_f, d_f = resample_profile(lon, lat, dist, step_km)
+    strips, runs = [], {}
+    for key, index, lab in (("litho", litho, "Litho"),
+                            ("tectonic", tectonic, "Domain")):
+        if index is None:
+            continue
+        r = runs_from_samples(d_f, index.sample(lon_f, lat_f), index)
+        sax = strip_axes_above(top_ax, height_in, gap_in, level=len(strips))
+        draw_strip(sax, r, label=lab if labels else None)
+        strips.append(sax)
+        runs[key] = r
+    crossings = []
+    if boundaries is not None:
+        crossings = boundaries.crossings(lon_f, lat_f, d_f, dedupe_km=dedupe_km)
+        draw_boundaries(panel_axes, crossings, strip_axes=strips,
+                        label_names=label_boundaries)
+    # Keep the panel title above the strips rather than under them.
+    title = top_ax.get_title()
+    if strips and title:
+        top_ax.set_title("")
+        strips[-1].set_title(title)
+    top_ax.set_xlim(dist[0], dist[-1])
+    return StripResult(strips, runs, crossings)
