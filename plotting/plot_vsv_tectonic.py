@@ -43,6 +43,8 @@ def main():
     ap.add_argument('--min-ndat', type=int, default=35)
     ap.add_argument('--max-dist', type=float, default=0.5)
     ap.add_argument('--out', default='vsv_tectonic.png')
+    import footprint as _fpmod
+    _fpmod.add_args(ap)
     args = ap.parse_args()
 
     d = np.load(args.fvs, allow_pickle=True)
@@ -58,6 +60,11 @@ def main():
         sm = ndat_wa >= args.min_ndat
     else:
         sm = np.ones(wa.sum(), dtype=bool)
+    fp = _fpmod.from_args(args)
+    if fp is not None:                       # selection: nodes inside the footprint mask
+        inside = fp.contains(Lon_wa, Lat_wa)
+        sm &= inside
+        print('  ' + fp.describe(inside))
     Lon_sm, Lat_sm = Lon_wa[sm], Lat_wa[sm]
 
     tr = ccrs.PlateCarree() if _HAS_CARTOPY else None
@@ -90,7 +97,8 @@ def main():
                                   ndat=ndat_wa, ndat_min=args.min_ndat,
                                   max_dist=args.max_dist)
         else:
-            im = _plot_scatter(ax, Lon_wa, Lat_wa, v_wa, cmap, vmin, vmax, s=120)
+            Ls, As, Vs = (Lon_sm, Lat_sm, v_sm) if fp is not None else (Lon_wa, Lat_wa, v_wa)
+            im = _plot_scatter(ax, Ls, As, Vs, cmap, vmin, vmax, s=120)
 
         # Ocean mask + coastline ON TOP of velocity (grey ocean hides offshore)
         _add_states_ocean(ax)
@@ -99,10 +107,16 @@ def main():
             add_tectonic_outlines(ax, lw=0.4, alpha=0.65, zorder=6,
                                   transform=tr, major_only=args.major)
 
+        if fp is not None:
+            fp.focus(ax, tr, veil_alpha=args.footprint_veil, zoom=not args.no_footprint_zoom)
         ax.set_title(f'z={zt:.0f} km', fontsize=10)
-        plt.colorbar(im, ax=ax, shrink=0.78,
-                     label=arr+(' (km/s)' if args.field!='xi' else ''), extend='both')
+        cblab = arr+(' (km/s)' if args.field!='xi' else '')
+        if fp is not None:
+            _fpmod.inset_colorbar(ax, im, cblab, extend='both')
+        else:
+            plt.colorbar(im, ax=ax, shrink=0.78, label=cblab, extend='both')
 
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     fig.savefig(args.out, dpi=150, bbox_inches='tight')
     print('Saved:', args.out)
 

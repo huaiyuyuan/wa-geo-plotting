@@ -78,10 +78,11 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
             ax.set_visible(False); return
         mis = d['Misfit'][wa].astype(float)
         fin = np.isfinite(mis)
+        if _FP_ACTIVE: fin &= sm             # footprint: only nodes inside
         vmax = np.nanpercentile(mis[fin], 90) if fin.any() else 1
         cmap = _cmap('YlOrRd', args.ncolors)
         im = _plot_scatter(ax, Lon_wa[fin], Lat_wa[fin], mis[fin], cmap, 0, vmax, s=args.markersize)
-        plt.colorbar(im, ax=ax, shrink=0.75, label='RMS misfit (km/s)', extend='max')
+        _cbar(im, ax, 'RMS misfit (km/s)', 'max')
         ax.set_title(f'z={zt:.0f} km', fontsize=9)
         _add_states_ocean(ax)
         if first: _add_structural(ax)
@@ -92,10 +93,11 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
             ax.set_visible(False); return
         err = _at_depth(d[errkey], z, zt)[wa].astype(float)
         fin = np.isfinite(err)
+        if _FP_ACTIVE: fin &= sm             # footprint: only nodes inside
         vmax = np.nanpercentile(err[fin], 90) if fin.any() else 1
         cmap = _cmap('YlOrRd', args.ncolors)
         im = _plot_scatter(ax, Lon_wa[fin], Lat_wa[fin], err[fin], cmap, 0, vmax, s=args.markersize)
-        plt.colorbar(im, ax=ax, shrink=0.75, label=f'{field} IQR/2', extend='max')
+        _cbar(im, ax, f'{field} IQR/2', 'max')
         ax.set_title(f'z={zt:.0f} km', fontsize=9)
         _add_states_ocean(ax)
         if first: _add_structural(ax)
@@ -108,10 +110,29 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
                               ndat=ndat_wa, ndat_min=args.min_ndat, max_dist=args.max_dist)
     else:
         im = _plot_scatter(ax, Lon_wa, Lat_wa, data_wa, cmap, vmin, vmax, s=args.markersize)
-    plt.colorbar(im, ax=ax, shrink=0.75, label=cbl, extend='both')
+    _cbar(im, ax, cbl, 'both')
     ax.set_title(f'z={zt:.0f} km', fontsize=9)
     _add_states_ocean(ax)
     if first: _add_structural(ax)
+
+_MAP_AXES = []                     # map axes made by _make_ax (for the footprint overlay)
+_FP_ACTIVE = False
+
+
+def _cbar(im, ax, label, extend):
+    """Inset colourbar at the NE corner when focusing on the footprint, else as before."""
+    if _FP_ACTIVE:
+        import footprint
+        return footprint.inset_colorbar(ax, im, label, extend=extend)
+    return plt.colorbar(im, ax=ax, shrink=0.75, label=label, extend=extend)
+_make_ax_orig = _make_ax
+
+
+def _make_ax(fig, rect):
+    ax = _make_ax_orig(fig, rect)
+    _MAP_AXES.append(ax)
+    return ax
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -131,6 +152,8 @@ def main():
     ap.add_argument('--min-ndat', type=int, default=35)
     ap.add_argument('--max-dist', type=float, default=0.5)
     ap.add_argument('--out-dir', default='figures/panels')
+    import footprint as _fpmod
+    _fpmod.add_args(ap)
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -143,6 +166,13 @@ def main():
         sm = ndat_wa >= args.min_ndat
     else:
         sm = np.ones(wa.sum(), dtype=bool)
+    global _FP_ACTIVE
+    fp = _fpmod.from_args(args)
+    _FP_ACTIVE = fp is not None
+    if fp is not None:                       # selection: nodes inside the footprint mask
+        inside = fp.contains(Lon_wa, Lat_wa)
+        sm &= inside
+        print('  ' + fp.describe(inside))
     Lon_sm, Lat_sm = Lon_wa[sm], Lat_wa[sm]
 
     depths = args.depths[:4]  # 2x2
@@ -155,9 +185,15 @@ def main():
     for mode in args.modes:
         fig = plt.figure(figsize=(13,13))
         fig.suptitle(f'{base} — {args.field.upper()} {titles[mode]}', fontsize=13, fontweight='bold')
+        _MAP_AXES.clear()
         for k,zt in enumerate(depths):
             _panel(fig, rects[k], d, zt, args.field, mode, args, wa,
                    Lon_wa, Lat_wa, Lon_sm, Lat_sm, ndat_wa, sm, first=(k==0))
+        if fp is not None:
+            tr = ccrs.PlateCarree() if _HAS_CARTOPY else None
+            for ax in _MAP_AXES:
+                fp.focus(ax, tr, veil_alpha=args.footprint_veil,
+                         zoom=not args.no_footprint_zoom)
         stem = os.path.join(args.out_dir, f'{args.field}.{mode}.panels')
         fig.savefig(stem+'.png', dpi=150, bbox_inches='tight')
         fig.savefig(stem+'.pdf', bbox_inches='tight')

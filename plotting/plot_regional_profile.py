@@ -24,6 +24,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.join(_HERE, '..', 'basemap'), os.path.join(_HERE, '..')):
+    if os.path.abspath(_p) not in map(os.path.abspath, sys.path):
+        sys.path.insert(0, os.path.abspath(_p))
+
 FIELDS = {   # key: (array, error array, label, colour)
     'vsv':  ('Vsv',  'Vsv_err',  None,                   '#1f4e9c'),
     'xi':   ('Xi',   'Xi_err',   r'$\xi$',               '#b2182b'),
@@ -93,6 +98,9 @@ def main():
                     help='only nodes with Ndat >= this (default 35, as the depth slices)')
     ap.add_argument('--moho', default=None, help='AR23 Moho file: mean +/- 1 sigma band')
     ap.add_argument('--no-err', action='store_true', help='omit posterior-uncertainty lines')
+    ap.add_argument('--footprint', action='store_true',
+                    help='average only nodes inside the WA Array coverage footprint (mask)')
+    ap.add_argument('--footprint-npz', default=None, help='override config.FOOTPRINT_NPZ')
     ap.add_argument('--out', default='figures/regional_profile.png')
     a = ap.parse_args()
 
@@ -101,6 +109,14 @@ def main():
     zm = z <= a.d_max if a.d_max else np.ones(len(z), bool)
     z = z[zm]
     m = node_mask(d, a.min_ndat)
+    where = ''
+    if a.footprint:
+        from footprint import Footprint
+        fp = Footprint(a.footprint_npz)
+        inside = fp.contains(d['Lon'], d['Lat'])
+        print('  ' + fp.describe(inside & m) + f" (after Ndat>={a.min_ndat})")
+        m &= inside
+        where = ', inside array footprint'
     nn = int(m.sum())
 
     second = a.second
@@ -148,7 +164,7 @@ def main():
     axes[0].set_ylabel('Depth (km)')
     axes[0].legend(fontsize=7, loc='lower left', framealpha=0.9)
     fig.suptitle(f'Regional average - {os.path.basename(a.fvs)}  '
-                 f'({nn} nodes, Ndat$\\geq${a.min_ndat})', fontsize=10)
+                 f'({nn} nodes, Ndat$\\geq${a.min_ndat}{where})', fontsize=10)
 
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     fig.savefig(a.out, dpi=200, bbox_inches='tight')

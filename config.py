@@ -27,5 +27,12 @@ STATIONS = os.environ.get('WA_STATIONS',
     '/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/pathqc.v2/stations_v2.txt')
 STATION_COLS = (2, 1)   # (lon_col, lat_col) 0-indexed
 
+# WA Array coverage footprint (ray-path density at 10 s; see the README in that dir)
+#   npz 'mask' (70x60 inversion grid) selects cells; outline .txt is for drawing only
+FOOTPRINT_DIR = os.environ.get('WA_FOOTPRINT_DIR',
+    '/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/footprint')
+FOOTPRINT_NPZ     = os.path.join(FOOTPRINT_DIR, 'wa_array_footprint.npz')
+FOOTPRINT_OUTLINE = os.path.join(FOOTPRINT_DIR, 'wa_array_outline.txt')
+
 # Default WA map extent (lon_min, lon_max, lat_min, lat_max)
 WA_EXTENT = [112, 130, -36, -13]

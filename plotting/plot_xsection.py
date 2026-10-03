@@ -498,6 +498,13 @@ def _ginput_sections(d, moho_file=None):
     return sections
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+def _index_footprint(args):
+    if not args.footprint:
+        return None
+    from footprint import Footprint
+    return Footprint(args.footprint_npz, args.footprint_outline)
+
+
 def _load_stations(path, cols=(2, 1)):
     """Station lon/lat from a 'code lat lon' style file (whitespace or comma;
     header/comment/bad lines skipped). cols = (lon_col, lat_col), 0-indexed."""
@@ -515,7 +522,8 @@ def _load_stations(path, cols=(2, 1)):
 
 
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
-                    litho_npz=None, tick_km=100, stations=None, style='gswa'):
+                    litho_npz=None, tick_km=100, stations=None, style='gswa',
+                    footprint=None, footprint_veil=0.5):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. If litho_npz is given, the GSWA 500k granite + mafic/greenstone/
     granite-greenstone polygons are drawn inside the Yilgarn and Pilbara cratons."""
@@ -559,6 +567,9 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                    **({'transform': tr} if tr else {})); _tect = False
 
     lkw = {'transform': tr} if tr else {}
+    if footprint is not None:          # outline + veil, no zoom (sections may extend past it)
+        footprint.focus(ax, tr, veil_alpha=footprint_veil, zoom=False,
+                        veil_zorder=4.4)     # over the geology, under stations + sections
     n_sta = 0
     if stations is not None:            # above the ocean mask (5), below section lines
         slon, slat = stations
@@ -842,6 +853,12 @@ def main():
                     help='--index-map station file (default config.STATIONS; '
                          'columns from config.STATION_COLS)')
     ap.add_argument('--no-stations', action='store_true', help='--index-map without stations')
+    ap.add_argument('--footprint', action='store_true',
+                    help='--index-map: draw the WA Array coverage footprint (outline + veil)')
+    ap.add_argument('--footprint-npz', default=None, help='override config.FOOTPRINT_NPZ')
+    ap.add_argument('--footprint-outline', default=None, help='override config.FOOTPRINT_OUTLINE')
+    ap.add_argument('--footprint-veil', type=float, default=0.5,
+                    help='veil opacity outside the footprint on the index map (0 = outline only)')
     ap.add_argument('--index-style', default='gswa', choices=['gswa', 'craton', 'plain'],
                     help='--index-map colours: gswa = GSWA 500k unit colours (default); '
                          'craton = tectonic domains + Yilgarn/Pilbara granite-greenstone; '
@@ -934,6 +951,7 @@ def main():
                 print(f"  stations: file not found ({sta_path}) - none drawn")
         _plot_index_map(d, sections, args.out_dir, tick_km=args.index_tick, stations=sta,
                         style='plain' if args.index_plain else args.index_style,
+                        footprint=_index_footprint(args), footprint_veil=args.footprint_veil,
                         litho_npz=None if args.index_plain else
                         _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
         if args.index_only:
