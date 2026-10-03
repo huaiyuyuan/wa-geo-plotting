@@ -65,7 +65,8 @@ def main():
     name = {'vsv': 'Viso' if is_xi_model else 'Vsv', 'xi': 'Xi', 'vpvs': 'Vp/Vs'}[args.field]
     clim_rel = args.clim_rel or {'vsv': 6.0, 'xi': 4.0, 'vpvs': 3.0}[args.field]
     data = d[arr]
-    cmapname = 'viridis' if args.field=='vpvs' else 'RdBu'
+    # locked convention: abs velocity Spectral (warm=slow); xi RdBu around 1.0
+    cmapname = {'vpvs': 'viridis', 'xi': 'RdBu', 'vsv': 'Spectral'}[args.field]
 
     wa = _mask_wa_points(Lon, Lat)
     Lon_wa, Lat_wa = Lon[wa], Lat[wa]

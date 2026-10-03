@@ -50,13 +50,13 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
     z = d['z']
     vname = 'Viso' if _is_xi_model(d) else 'Vsv'
     if field == 'vsv':
-        arr = d['Vsv']; label=f'{vname} (km/s)'; cmapname='RdBu'
+        arr = d['Vsv']; label=f'{vname} (km/s)'; cmapname='Spectral'   # warm = slow
     elif field == 'xi':
         arr = d['Xi']; label='Xi'; cmapname='RdBu'
     elif field == 'vpvs':
         arr = d['Vpvs']; label='Vp/Vs'; cmapname='viridis'
     else:
-        arr = d['Vsv']; label='Vsv'; cmapname='RdBu'
+        arr = d['Vsv']; label='Vsv'; cmapname='Spectral'
     val = _at_depth(arr, z, zt)
     val_wa = val[wa]; val_sm = val_wa[sm]
 

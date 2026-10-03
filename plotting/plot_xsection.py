@@ -227,6 +227,10 @@ def _sample_2d(Lon, Lat, data2d, prof_lon, prof_lat):
         return griddata(pts[fin], data2d[fin], qpts, method='linear')
 
 
+# Colour convention (locked): absolute velocity = Spectral (warm = slow);
+# xi diverging around 1.0 and all differences = RdBu (red = low/slow).
+CMAP_ABS = 'Spectral'
+
 # ── Section scale (shared by per-section and --stack; plot_stack's math) ─────
 PAGE_W_IN = 9.5     # longest section spans this many inches
 DEFAULT_VE = 3.0   # approved flat-strip look; per-section and --stack share it
@@ -385,7 +389,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
         return im
 
     r = 0
-    _pcolor(axes[r], vsv_p, _cmap('RdBu', ncolors), vmin_v, vmax_v,
+    _pcolor(axes[r], vsv_p, _cmap(CMAP_ABS, ncolors), vmin_v, vmax_v,
             f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
     _pcolor(axes[r], dln_p, _cmap('RdBu', ncolors), -clim_rel, clim_rel,
             f'd{vname} (%)', title=f'd{vname} (%) vs model mean'); r += 1
@@ -708,7 +712,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         row_h_in = ve_h
 
     if field=='vsv':
-        cmap=_cmap('RdBu',ncolors); clab=f'{vname} (km/s)'; ext='both'
+        cmap=_cmap(CMAP_ABS,ncolors); clab=f'{vname} (km/s)'; ext='both'
     elif field=='dvsv':
         cmap=_cmap('RdBu',ncolors); clab=f'd{vname} (%)'; ext='both'
     elif field=='xi':
