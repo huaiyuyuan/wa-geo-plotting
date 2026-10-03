@@ -33,6 +33,11 @@ def main():
     ap.add_argument('--fvs', required=True)
     ap.add_argument('--depths', nargs='+', type=float, default=[10,20,30,40])
     ap.add_argument('--field', default='vsv', choices=['vsv','xi','vpvs'])
+    ap.add_argument('--mode', default='abs', choices=['abs', 'rel'],
+                    help='abs = absolute value; rel = dln (%%) vs the mean of the plotted '
+                         'nodes at each depth (the footprint mean with --footprint)')
+    ap.add_argument('--clim-rel', type=float, default=None,
+                    help='rel colour limit +/- %% (default 6 for Vs, 4 for xi, 3 for Vp/Vs)')
     ap.add_argument('--overlay', default='outlines', choices=['outlines','filled','none'])
     ap.add_argument('--major', action='store_true')
     ap.add_argument('--smooth', action='store_true')
@@ -50,6 +55,14 @@ def main():
     d = np.load(args.fvs, allow_pickle=True)
     Lon, Lat, z = d['Lon'], d['Lat'], d['z']
     arr = {'vsv':'Vsv','xi':'Xi','vpvs':'Vpvs'}[args.field]
+    if arr not in d.files:
+        sys.exit(f"no '{arr}' array in {args.fvs}")
+    if np.nanstd(d[arr]) <= 1e-4:
+        sys.exit(f"{arr} is fixed at {np.nanmean(d[arr]):.4f} in this model - nothing to map"
+                 + (" (use the ZT/xi Fvs for xi)" if args.field == 'xi' else ""))
+    is_xi_model = 'Xi' in d.files and np.nanstd(d['Xi']) > 1e-4
+    name = {'vsv': 'Viso' if is_xi_model else 'Vsv', 'xi': 'Xi', 'vpvs': 'Vp/Vs'}[args.field]
+    clim_rel = args.clim_rel or {'vsv': 6.0, 'xi': 4.0, 'vpvs': 3.0}[args.field]
     data = d[arr]
     cmapname = 'viridis' if args.field=='vpvs' else 'RdBu'
 
@@ -69,7 +82,8 @@ def main():
 
     tr = ccrs.PlateCarree() if _HAS_CARTOPY else None
     fig = plt.figure(figsize=(15, 15))
-    fig.suptitle(f"{os.path.basename(args.fvs).replace('.npz','')} — {arr}",
+    fig.suptitle(f"{os.path.basename(args.fvs).replace('.npz','')} — "
+                 + (f"dln{name} (%, vs mean at each depth)" if args.mode == 'rel' else name),
                  fontsize=13, fontweight='bold')
     rects = [[0.04,0.52,0.42,0.42],[0.52,0.52,0.42,0.42],
              [0.04,0.04,0.42,0.42],[0.52,0.04,0.42,0.42]]
@@ -78,12 +92,18 @@ def main():
         ax = _make_ax(fig, rect)   # cartopy GeoAxes with WA extent
         v = _at_depth(data, z, zt)
         v_wa = v[wa]; v_sm = v_wa[sm]
-        if args.field=='xi':
+        if args.mode == 'rel':                 # dln vs the plotted nodes' mean at this depth
+            ref = np.nanmean(v_sm)
+            v_wa = (v_wa / ref - 1.0) * 100.0; v_sm = (v_sm / ref - 1.0) * 100.0
+            vmin, vmax = -clim_rel, clim_rel
+            cmap = _cmap('RdBu', args.ncolors)
+        elif args.field=='xi':
             vmin,vmax = 0.90, 1.10
+            cmap = _cmap(cmapname, args.ncolors)
         else:
             med,std = np.nanmedian(v_sm), np.nanstd(v_sm)
             vmin,vmax = med-args.sigma*std, med+args.sigma*std
-        cmap = _cmap(cmapname, args.ncolors)
+            cmap = _cmap(cmapname, args.ncolors)
 
         # Optional filled tectonic UNDER the velocity
         if args.overlay=='filled':
@@ -110,7 +130,10 @@ def main():
         if fp is not None:
             fp.focus(ax, tr, veil_alpha=args.footprint_veil, zoom=not args.no_footprint_zoom)
         ax.set_title(f'z={zt:.0f} km', fontsize=10)
-        cblab = arr+(' (km/s)' if args.field!='xi' else '')
+        if args.mode == 'rel':
+            cblab = f'dln{name} (%)'
+        else:
+            cblab = name + (' (km/s)' if args.field == 'vsv' else '')
         if fp is not None:
             _fpmod.inset_colorbar(ax, im, cblab, extend='both')
         else:

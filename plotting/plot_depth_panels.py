@@ -48,10 +48,11 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
            ndat_wa, sm, first=False):
     ax = _make_ax(fig, rect)
     z = d['z']
+    vname = 'Viso' if _is_xi_model(d) else 'Vsv'
     if field == 'vsv':
-        arr = d['Vsv']; label='Vsv (km/s)'; cmapname='RdBu'
+        arr = d['Vsv']; label=f'{vname} (km/s)'; cmapname='RdBu'
     elif field == 'xi':
-        arr = d['Xi']; label='xi'; cmapname='RdBu'
+        arr = d['Xi']; label='Xi'; cmapname='RdBu'
     elif field == 'vpvs':
         arr = d['Vpvs']; label='Vp/Vs'; cmapname='viridis'
     else:
@@ -62,6 +63,8 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
     if mode == 'abs':
         med, std = np.nanmedian(val_sm), np.nanstd(val_sm)
         vmin, vmax = med - args.sigma_abs*std, med + args.sigma_abs*std
+        if field == 'xi':
+            vmin, vmax = 0.90, 1.10        # same fixed xi scale as sections/slices
         cmap = _cmap(cmapname, args.ncolors)
         data_sm, data_wa = val_sm, val_wa
         cbl = label
@@ -72,7 +75,7 @@ def _panel(fig, rect, d, zt, field, mode, args, wa, Lon_wa, Lat_wa, Lon_sm, Lat_
         vmin, vmax = -args.clim_rel, args.clim_rel
         cmap = _cmap('RdBu', args.ncolors)
         data_sm, data_wa = rel_sm, rel_wa
-        cbl = f'd{label.split()[0]} (%)'
+        cbl = f'dln{label.split()[0]} (%)'
     elif mode == 'error':  # DATA misfit (fit quality) — one value per node
         if 'Misfit' not in d:
             ax.set_visible(False); return
@@ -119,6 +122,19 @@ _MAP_AXES = []                     # map axes made by _make_ax (for the footprin
 _FP_ACTIVE = False
 
 
+def _is_xi_model(d):
+    return 'Xi' in d.files and np.nanstd(d['Xi']) > 1e-4
+
+
+def _check_field_varies(d, field):
+    key = {'vsv': 'Vsv', 'xi': 'Xi', 'vpvs': 'Vpvs'}[field]
+    if key not in d.files:
+        sys.exit(f"no '{key}' array in this Fvs file")
+    if np.nanstd(d[key]) <= 1e-4:
+        sys.exit(f"{key} is fixed at {np.nanmean(d[key]):.4f} in this model - nothing to map"
+                 + (" (use the ZT/xi Fvs for xi)" if field == 'xi' else ""))
+
+
 def _cbar(im, ax, label, extend):
     """Inset colourbar at the NE corner when focusing on the footprint, else as before."""
     if _FP_ACTIVE:
@@ -158,6 +174,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     d = np.load(args.fvs, allow_pickle=True)
+    _check_field_varies(d, args.field)
     Lon, Lat = d['Lon'], d['Lat']
     wa = _mask_wa_points(Lon, Lat)
     Lon_wa, Lat_wa = Lon[wa], Lat[wa]
