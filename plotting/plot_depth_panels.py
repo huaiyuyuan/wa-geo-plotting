@@ -153,7 +153,8 @@ def _make_ax(fig, rect):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fvs', required=True)
-    ap.add_argument('--depths', nargs='+', type=float, default=[10,20,30,40])
+    ap.add_argument('--depths', nargs='+', type=float, default=[10,20,30,45],
+                    help='four depths (km); 45 not 40, which sits on the Moho artefact')
     ap.add_argument('--field', default='vsv', choices=['vsv','xi','vpvs'])
     ap.add_argument('--modes', nargs='+', default=['abs','rel','error'],
                     choices=['abs','rel','error','uncert'],
