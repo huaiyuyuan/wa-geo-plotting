@@ -4,7 +4,7 @@ make_depth_maps.py - the full depth-slice set in one go (plot_vsv_tectonic.py):
 every parameter that varies in each model, absolute and dln, at 10/20/30/45 km
 (45 not 40: 40 km sits on the Moho artefact).
 
-  ZT/xi model : Viso, Xi           (abs + rel)
+  ZT/xi model : Vsv (= Viso/sqrt((2+Xi^2)/3)), Viso, Xi   (abs + rel)
   Z model     : Vsv                (abs + rel)
   any model   : Vp/Vs only if it actually varies (fixed at 1.73 in current Z runs)
 
@@ -12,7 +12,7 @@ every parameter that varies in each model, absolute and dln, at 10/20/30/45 km
   # footprint focus is ON by default (--no-footprint for the full WA view)
   # extra options are passed to plot_vsv_tectonic.py, e.g.  -- --overlay filled
 
-Outputs: <out-dir>/<model>.<param>.<abs|rel>.png, e.g. ZT.xi.rel.png
+Outputs: <out-dir>/<tag>.<param>.<abs|rel>.png, e.g. ZT.xi.rel.png (--tag-zt iter8 -> iter8.xi.rel.png)
 """
 import argparse, os, subprocess, sys
 import numpy as np
@@ -30,6 +30,8 @@ def main():
     ap.add_argument('--fvs-zt', help='xi (ZT) model Fvs npz')
     ap.add_argument('--fvs-z', help='Z model Fvs npz')
     ap.add_argument('--out-dir', default='figures/depth_maps')
+    ap.add_argument('--tag-zt', default='ZT', help='filename prefix for the ZT model (e.g. iter8)')
+    ap.add_argument('--tag-z', default='Z', help='filename prefix for the Z model')
     ap.add_argument('--depths', nargs='+', type=float, default=[10, 20, 30, 45])
     ap.add_argument('--modes', nargs='+', default=['abs', 'rel'], choices=['abs', 'rel'])
     ap.add_argument('--no-footprint', action='store_true', help='full WA view, no focus')
@@ -43,14 +45,13 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
 
     jobs = []
-    for tag, path in (('ZT', a.fvs_zt), ('Z', a.fvs_z)):
+    for tag, path in ((a.tag_zt, a.fvs_zt), (a.tag_z, a.fvs_z)):
         if not path:
             continue
         d = np.load(path, allow_pickle=True)
         xi_model = varies(d, 'Xi')
-        params = [('vsv', 'viso' if xi_model else 'vsv')]
-        if xi_model:
-            params.append(('xi', 'xi'))
+        params = [('vsv_true', 'vsv'), ('vsv', 'viso'), ('xi', 'xi')] if xi_model \
+            else [('vsv', 'vsv')]
         if varies(d, 'Vpvs'):
             params.append(('vpvs', 'vpvs'))
         skipped = [k for k in ('Xi', 'Vpvs') if k in d.files and not varies(d, k)]

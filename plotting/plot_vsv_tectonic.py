@@ -33,7 +33,9 @@ def main():
     ap.add_argument('--fvs', required=True)
     ap.add_argument('--depths', nargs='+', type=float, default=[10,20,30,45],
                     help='four depths (km); 45 not 40, which sits on the Moho artefact')
-    ap.add_argument('--field', default='vsv', choices=['vsv','xi','vpvs'])
+    ap.add_argument('--field', default='vsv', choices=['vsv','vsv_true','xi','vpvs'],
+                    help="vsv = the Fvs 'Vsv' array (Viso in xi/ZT models); "
+                         "vsv_true = Viso/sqrt((2+Xi^2)/3) (xi models only); xi; vpvs")
     ap.add_argument('--mode', default='abs', choices=['abs', 'rel'],
                     help='abs = absolute value; rel = dln (%%) vs the mean of the plotted '
                          'nodes at each depth (the footprint mean with --footprint)')
@@ -55,18 +57,26 @@ def main():
 
     d = np.load(args.fvs, allow_pickle=True)
     Lon, Lat, z = d['Lon'], d['Lat'], d['z']
-    arr = {'vsv':'Vsv','xi':'Xi','vpvs':'Vpvs'}[args.field]
+    arr = {'vsv':'Vsv','vsv_true':'Vsv','xi':'Xi','vpvs':'Vpvs'}[args.field]
     if arr not in d.files:
         sys.exit(f"no '{arr}' array in {args.fvs}")
     if np.nanstd(d[arr]) <= 1e-4:
         sys.exit(f"{arr} is fixed at {np.nanmean(d[arr]):.4f} in this model - nothing to map"
                  + (" (use the ZT/xi Fvs for xi)" if args.field == 'xi' else ""))
     is_xi_model = 'Xi' in d.files and np.nanstd(d['Xi']) > 1e-4
-    name = {'vsv': 'Viso' if is_xi_model else 'Vsv', 'xi': 'Xi', 'vpvs': 'Vp/Vs'}[args.field]
-    clim_rel = args.clim_rel or {'vsv': 6.0, 'xi': 4.0, 'vpvs': 3.0}[args.field]
+    name = {'vsv': 'Viso' if is_xi_model else 'Vsv', 'vsv_true': 'Vsv',
+            'xi': 'Xi', 'vpvs': 'Vp/Vs'}[args.field]
+    clim_rel = args.clim_rel or {'vsv': 6.0, 'vsv_true': 6.0, 'xi': 4.0, 'vpvs': 3.0}[args.field]
     data = d[arr]
+    if args.field == 'vsv_true':
+        if not is_xi_model:
+            sys.exit("vsv_true needs an xi (ZT) model; in a Z model the 'Vsv' array "
+                     "already is Vsv - use --field vsv")
+        # Voigt isotropic average with xi = Vsh/Vsv (setup=3): Viso^2 = (2Vsv^2+Vsh^2)/3
+        data = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
     # locked convention: abs velocity Spectral (warm=slow); xi RdBu around 1.0
-    cmapname = {'vpvs': 'viridis', 'xi': 'RdBu', 'vsv': 'Spectral'}[args.field]
+    cmapname = {'vpvs': 'viridis', 'xi': 'RdBu', 'vsv': 'Spectral',
+                'vsv_true': 'Spectral'}[args.field]
 
     wa = _mask_wa_points(Lon, Lat)
     Lon_wa, Lat_wa = Lon[wa], Lat[wa]
@@ -135,7 +145,7 @@ def main():
         if args.mode == 'rel':
             cblab = f'dln{name} (%)'
         else:
-            cblab = name + (' (km/s)' if args.field == 'vsv' else '')
+            cblab = name + (' (km/s)' if args.field in ('vsv', 'vsv_true') else '')
         if fp is not None:
             _fpmod.inset_colorbar(ax, im, cblab, extend='both')
         else:
