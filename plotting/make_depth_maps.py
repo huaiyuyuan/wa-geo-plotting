@@ -37,6 +37,8 @@ def main():
     ap.add_argument('--modes', nargs='+', default=['abs', 'rel'], choices=['abs', 'rel'])
     ap.add_argument('--no-footprint', action='store_true', help='full WA view, no focus')
     ap.add_argument('--overlay', default='outlines', choices=['outlines', 'filled', 'none'])
+    ap.add_argument('--div-gap', type=float, default=0.15,
+                    help='diverging maps skip +/- this band around white (0 = classic)')
     ap.add_argument('extra', nargs=argparse.REMAINDER,
                     help='after "--": further options for plot_vsv_tectonic.py')
     a = ap.parse_args()
@@ -69,6 +71,7 @@ def main():
         cmd = [sys.executable, os.path.join(HERE, 'plot_vsv_tectonic.py'), '--fvs', path,
                '--field', field, '--mode', mode, '--overlay', a.overlay, '--major', '--smooth',
                '--depths', *map(str, a.depths), '--out', out]
+        cmd += ['--div-gap', str(a.div_gap)]
         if not a.no_footprint:
             cmd.append('--footprint')
         cmd += extra

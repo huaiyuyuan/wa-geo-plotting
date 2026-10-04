@@ -171,7 +171,11 @@ def main():
     ap.add_argument('--out-dir', default='figures/panels')
     import footprint as _fpmod
     _fpmod.add_args(ap)
+    ap.add_argument('--div-gap', type=float, default=0.15,
+                    help='diverging colour maps skip +/- this band around white (0 = classic)')
     args = ap.parse_args()
+    import plot_depth_slice as _pds
+    _pds.DIV_GAP = args.div_gap
 
     os.makedirs(args.out_dir, exist_ok=True)
     d = np.load(args.fvs, allow_pickle=True)

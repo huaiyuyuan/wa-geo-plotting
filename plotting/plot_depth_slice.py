@@ -199,7 +199,20 @@ def _plot_scatter(ax, lon, lat, val, cmap, vmin, vmax, s=120):
     return ax.scatter(lon[fin], lat[fin], **kw)
 
 # ── Colormap helper ───────────────────────────────────────────────────────────
-def _cmap(name, n):
+# Diverging maps (RdBu, and Spectral for absolute velocity) skip a band around their
+# pale middle (white / yellow) so values near the centre keep a colour; DIV_GAP = half-width of the skipped band
+# (0 = classic RdBu through white). Set from --div-gap.
+DIV_GAP = 0.15
+DIVERGING = ('RdBu', 'Spectral')     # Spectral: skips the pale-yellow middle
+
+
+def _cmap(name, n=32):
+    if name in DIVERGING and DIV_GAP > 0:
+        from matplotlib.colors import ListedColormap
+        base = matplotlib.colormaps[name]
+        h = n // 2
+        x = np.r_[np.linspace(0.0, 0.5 - DIV_GAP, h), np.linspace(0.5 + DIV_GAP, 1.0, n - h)]
+        return ListedColormap(base(x), name=f'{name}_gap')
     try:
         return matplotlib.colormaps[name].resampled(n)
     except Exception:

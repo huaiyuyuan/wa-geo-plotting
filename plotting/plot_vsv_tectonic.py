@@ -53,7 +53,11 @@ def main():
     ap.add_argument('--out', default='vsv_tectonic.png')
     import footprint as _fpmod
     _fpmod.add_args(ap)
+    ap.add_argument('--div-gap', type=float, default=0.15,
+                    help='diverging colour maps skip +/- this band around white (0 = classic)')
     args = ap.parse_args()
+    import plot_depth_slice as _pds
+    _pds.DIV_GAP = args.div_gap
 
     d = np.load(args.fvs, allow_pickle=True)
     Lon, Lat, z = d['Lon'], d['Lat'], d['z']
