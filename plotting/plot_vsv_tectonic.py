@@ -53,7 +53,7 @@ def main():
     ap.add_argument('--out', default='vsv_tectonic.png')
     import footprint as _fpmod
     _fpmod.add_args(ap)
-    ap.add_argument('--div-gap', type=float, default=0.15,
+    ap.add_argument('--div-gap', type=float, default=0.07,
                     help='diverging colour maps skip +/- this band around white (0 = classic)')
     ap.add_argument('--div-white', type=int, default=2,
                     help='neutral colour levels at the centre of diverging maps (0 = none)')

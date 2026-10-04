@@ -199,11 +199,12 @@ def _plot_scatter(ax, lon, lat, val, cmap, vmin, vmax, s=120):
     return ax.scatter(lon[fin], lat[fin], **kw)
 
 # ── Colormap helper ───────────────────────────────────────────────────────────
-# Diverging maps (RdBu, and Spectral for absolute velocity) skip a band around their
-# pale middle (white / yellow) so values near the centre keep a colour; DIV_GAP = half-width of the skipped band
+# Rule: RELATIVE / centred values (dln fields, xi around 1.0) -> RdBu with a narrow
+# neutral (white) centre and a gentle gap; ABSOLUTE values (Vsv, Viso) -> plain,
+# continuous Spectral. Gap/neutral settings below apply to the centred maps only; DIV_GAP = half-width of the skipped band
 # (0 = classic RdBu through white). Set from --div-gap.
-DIV_GAP = 0.15
-DIVERGING = ('RdBu', 'Spectral')     # Spectral: skips the pale-yellow middle
+DIV_GAP = 0.07
+DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) stays continuous
 
 
 DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white

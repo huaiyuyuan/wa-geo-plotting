@@ -246,11 +246,12 @@ def _section_scale(maxd, zbot, ve=DEFAULT_VE, page_w_in=PAGE_W_IN):
 
 
 # ── Colormap helper ───────────────────────────────────────────────────────────
-# Diverging maps (RdBu, and Spectral for absolute velocity) skip a band around their
-# pale middle (white / yellow) so values near the centre keep a colour; DIV_GAP = half-width of the skipped band
+# Rule: RELATIVE / centred values (dln fields, xi around 1.0) -> RdBu with a narrow
+# neutral (white) centre and a gentle gap; ABSOLUTE values (Vsv, Viso) -> plain,
+# continuous Spectral. Gap/neutral settings below apply to the centred maps only; DIV_GAP = half-width of the skipped band
 # (0 = classic RdBu through white). Set from --div-gap.
-DIV_GAP = 0.15
-DIVERGING = ('RdBu', 'Spectral')     # Spectral: skips the pale-yellow middle
+DIV_GAP = 0.07
+DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) stays continuous
 
 
 DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white
@@ -849,9 +850,9 @@ def main():
                          'one whole-model mean over all depths')
     ap.add_argument('--clim-xi', type=float, default=5.0,
                     help='dlnXi colour limit, +/- %% (default 5)')
-    ap.add_argument('--div-gap', type=float, default=0.15,
+    ap.add_argument('--div-gap', type=float, default=0.07,
                     help='diverging colour maps skip +/- this band around white '
-                         '(0 = classic RdBu through white; default 0.15)')
+                         '(0 = classic RdBu through white; default 0.07)')
     ap.add_argument('--div-white', type=int, default=2,
                     help='neutral colour levels at the centre of diverging maps (0 = none)')
     ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
