@@ -12,7 +12,8 @@ every parameter that varies in each model, absolute and dln, at 10/20/30/45 km
   # footprint focus is ON by default (--no-footprint for the full WA view)
   # extra options are passed to plot_vsv_tectonic.py, e.g.  -- --overlay filled
 
-Outputs: <out-dir>/<tag>.<param>.<abs|rel>.png, e.g. ZT.xi.rel.png (--tag-zt iter8 -> iter8.xi.rel.png)
+Outputs: <out-dir>/<tag>.<param>.<abs|rel>.<fp|wa>.png - fp = footprint focus (default),
+wa = whole WA (--no-footprint); e.g. --tag-zt iter8 -> iter8.xi.rel.fp.png, iter8.xi.rel.wa.png
 """
 import argparse, os, subprocess, sys
 import numpy as np
@@ -63,7 +64,8 @@ def main():
 
     done, failed = [], []
     for tag, path, field, name, mode in jobs:
-        out = os.path.join(a.out_dir, f"{tag}.{name}.{mode}.png")
+        extent = 'wa' if a.no_footprint else 'fp'      # whole WA vs footprint: never collide
+        out = os.path.join(a.out_dir, f"{tag}.{name}.{mode}.{extent}.png")
         cmd = [sys.executable, os.path.join(HERE, 'plot_vsv_tectonic.py'), '--fvs', path,
                '--field', field, '--mode', mode, '--overlay', a.overlay, '--major', '--smooth',
                '--depths', *map(str, a.depths), '--out', out]

@@ -625,7 +625,8 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                         litho=litho_drawn)
     import os
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f'xsection_index_map.png')
+    out = os.path.join(out_dir, 'xsection_index_map' +
+                       ('.fp' if footprint is not None else '') + '.png')   # whole-WA name unchanged
     fig.savefig(out, dpi=150, bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'), bbox_inches='tight')
     plt.close(fig)

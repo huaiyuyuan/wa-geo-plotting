@@ -37,23 +37,59 @@ class Footprint:
             raise FileNotFoundError(f"footprint npz not found: {self.npz_path} "
                                     f"(set config.FOOTPRINT_NPZ or WA_FOOTPRINT_DIR)")
         d = np.load(self.npz_path, allow_pickle=True)
-        mask = np.asarray(d[key]).astype(bool)
+        mask = self._oriented(d, key)
         lat2d, lon2d = np.asarray(d['lat2d'], float), np.asarray(d['lon2d'], float)
         if np.ptp(lat2d[:, 0]) == 0:          # latitude varies along axis 1: make rows = lat
-            mask, lat2d, lon2d = mask.T, lat2d.T, lon2d.T
-        lat, lon = lat2d[:, 0], lon2d[0, :]
-        if lat[0] > lat[-1]:
-            lat, mask = lat[::-1], mask[::-1]
-        if lon[0] > lon[-1]:
-            lon, mask = lon[::-1], mask[:, ::-1]
+            lat2d, lon2d = lat2d.T, lon2d.T
+        lat, lon = np.sort(lat2d[:, 0]), np.sort(lon2d[0, :])
         self.lat, self.lon, self.mask = lat, lon, mask
+        self._smooth = self._oriented(d, 'mask_smooth') if 'mask_smooth' in d.files else None
         self.dlat = np.median(np.diff(lat))
         self.dlon = np.median(np.diff(lon))
         self.key = key
         self.olon = self.olat = None
+        self.outline_source = None
         if self.outline_path and os.path.isfile(self.outline_path):
             xy = np.loadtxt(self.outline_path, comments='#', usecols=(0, 1))
             self.olon, self.olat = xy[:, 0], xy[:, 1]
+            self.outline_source = os.path.basename(self.outline_path)
+        else:                                 # no outline file: trace the mask edge
+            src = self._smooth if self._smooth is not None else self.mask
+            xy = self._trace_edge(src)
+            if xy is not None:
+                self.olon, self.olat = xy[:, 0], xy[:, 1]
+                self.outline_source = ('edge of mask_smooth' if self._smooth is not None
+                                       else f'edge of {key}') + ' (outline file not found)'
+
+    @staticmethod
+    def _oriented(d, key):
+        """Grid `key` as [lat ascending, lon ascending]."""
+        g = np.asarray(d[key]).astype(bool)
+        lat2d, lon2d = np.asarray(d['lat2d'], float), np.asarray(d['lon2d'], float)
+        if np.ptp(lat2d[:, 0]) == 0:
+            g, lat2d, lon2d = g.T, lat2d.T, lon2d.T
+        if lat2d[0, 0] > lat2d[-1, 0]:
+            g = g[::-1]
+        if lon2d[0, 0] > lon2d[0, -1]:
+            g = g[:, ::-1]
+        return g
+
+    def _trace_edge(self, m):
+        """Longest closed 0.5-contour of the mask (padded so it always closes)."""
+        import matplotlib
+        import matplotlib.pyplot as plt
+        lat = np.r_[self.lat[0] - self.dlat, self.lat, self.lat[-1] + self.dlat]
+        lon = np.r_[self.lon[0] - self.dlon, self.lon, self.lon[-1] + self.dlon]
+        z = np.pad(m.astype(float), 1)
+        fig = plt.figure()
+        try:
+            cs = fig.add_subplot().contour(lon, lat, z, levels=[0.5])
+            segs = cs.allsegs[0]
+        finally:
+            plt.close(fig)
+        if not segs:
+            return None
+        return max(segs, key=len)
 
     # ---------------------------------------------------------------- selection
     def contains(self, lon, lat):
@@ -69,7 +105,7 @@ class Footprint:
 
     def describe(self, keep):
         return (f"footprint ({self.key}, {os.path.basename(self.npz_path)}): "
-                f"{int(np.sum(keep))} of {len(keep)} nodes inside")
+                f"{int(np.sum(keep))} of {len(keep)} nodes inside; outline: {self.outline_source}")
 
     # ---------------------------------------------------------------- drawing
     def _outline_xy(self):
