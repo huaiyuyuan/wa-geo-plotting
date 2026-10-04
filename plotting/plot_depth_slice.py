@@ -206,13 +206,21 @@ DIV_GAP = 0.15
 DIVERGING = ('RdBu', 'Spectral')     # Spectral: skips the pale-yellow middle
 
 
+DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white
+
+
 def _cmap(name, n=32):
-    if name in DIVERGING and DIV_GAP > 0:
+    if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
-        h = n // 2
-        x = np.r_[np.linspace(0.0, 0.5 - DIV_GAP, h), np.linspace(0.5 + DIV_GAP, 1.0, n - h)]
-        return ListedColormap(base(x), name=f'{name}_gap')
+        k = max(0, min(DIV_WHITE, n - 2))
+        if (n - k) % 2:                      # keep the neutral band centred
+            k += 1
+        side = (n - k) // 2
+        lo = base(np.linspace(0.0, 0.5 - DIV_GAP, side))
+        hi = base(np.linspace(0.5 + DIV_GAP, 1.0, side))
+        mid = np.repeat(np.asarray(base(0.5))[None, :], k, axis=0)
+        return ListedColormap(np.vstack([lo, mid, hi]), name=f'{name}_gap')
     try:
         return matplotlib.colormaps[name].resampled(n)
     except Exception:

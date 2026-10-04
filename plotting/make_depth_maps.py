@@ -39,6 +39,8 @@ def main():
     ap.add_argument('--overlay', default='outlines', choices=['outlines', 'filled', 'none'])
     ap.add_argument('--div-gap', type=float, default=0.15,
                     help='diverging maps skip +/- this band around white (0 = classic)')
+    ap.add_argument('--div-white', type=int, default=2,
+                    help='neutral colour levels at the centre of diverging maps (0 = none)')
     ap.add_argument('extra', nargs=argparse.REMAINDER,
                     help='after "--": further options for plot_vsv_tectonic.py')
     a = ap.parse_args()
@@ -71,7 +73,7 @@ def main():
         cmd = [sys.executable, os.path.join(HERE, 'plot_vsv_tectonic.py'), '--fvs', path,
                '--field', field, '--mode', mode, '--overlay', a.overlay, '--major', '--smooth',
                '--depths', *map(str, a.depths), '--out', out]
-        cmd += ['--div-gap', str(a.div_gap)]
+        cmd += ['--div-gap', str(a.div_gap), '--div-white', str(a.div_white)]
         if not a.no_footprint:
             cmd.append('--footprint')
         cmd += extra

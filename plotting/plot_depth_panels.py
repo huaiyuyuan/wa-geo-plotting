@@ -173,9 +173,12 @@ def main():
     _fpmod.add_args(ap)
     ap.add_argument('--div-gap', type=float, default=0.15,
                     help='diverging colour maps skip +/- this band around white (0 = classic)')
+    ap.add_argument('--div-white', type=int, default=2,
+                    help='neutral colour levels at the centre of diverging maps (0 = none)')
     args = ap.parse_args()
     import plot_depth_slice as _pds
     _pds.DIV_GAP = args.div_gap
+    _pds.DIV_WHITE = args.div_white
 
     os.makedirs(args.out_dir, exist_ok=True)
     d = np.load(args.fvs, allow_pickle=True)

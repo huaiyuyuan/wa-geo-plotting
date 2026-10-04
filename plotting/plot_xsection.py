@@ -253,13 +253,21 @@ DIV_GAP = 0.15
 DIVERGING = ('RdBu', 'Spectral')     # Spectral: skips the pale-yellow middle
 
 
+DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white
+
+
 def _cmap(name, n=32):
-    if name in DIVERGING and DIV_GAP > 0:
+    if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
-        h = n // 2
-        x = np.r_[np.linspace(0.0, 0.5 - DIV_GAP, h), np.linspace(0.5 + DIV_GAP, 1.0, n - h)]
-        return ListedColormap(base(x), name=f'{name}_gap')
+        k = max(0, min(DIV_WHITE, n - 2))
+        if (n - k) % 2:                      # keep the neutral band centred
+            k += 1
+        side = (n - k) // 2
+        lo = base(np.linspace(0.0, 0.5 - DIV_GAP, side))
+        hi = base(np.linspace(0.5 + DIV_GAP, 1.0, side))
+        mid = np.repeat(np.asarray(base(0.5))[None, :], k, axis=0)
+        return ListedColormap(np.vstack([lo, mid, hi]), name=f'{name}_gap')
     try:
         return matplotlib.colormaps[name].resampled(n)
     except Exception:
@@ -301,10 +309,12 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
                  out_dir='figures/xsections',
                  max_dist=None, km_per_in=None, panel_h_in=None, ref_mean=None,
                  long_ratio=3.0, moho_mask=0.5, xi_panel='xi', xi_ref='depth',
-                 clim_xi=5.0, div_gap=None):
-    global DIV_GAP
+                 clim_xi=5.0, div_gap=None, div_white=None):
+    global DIV_GAP, DIV_WHITE
     if div_gap is not None:
         DIV_GAP = div_gap
+    if div_white is not None:
+        DIV_WHITE = div_white
     """One cross-section. Panels: Vsv/Viso | dlnVsv | [xi] | uncertainty (no misfit).
     Scale is set by the LONGEST section (drawn 2:1 per panel, full landscape width);
     km_per_in and panel_h_in are computed once from it and passed to every section so
@@ -673,10 +683,12 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
                ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
-               xi_ref='depth', clim_xi=5.0, div_gap=None):
-    global DIV_GAP
+               xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None):
+    global DIV_GAP, DIV_WHITE
     if div_gap is not None:
         DIV_GAP = div_gap
+    if div_white is not None:
+        DIV_WHITE = div_white
     """Stack ONE field for all sections on a single page. Rows = sections, same
     height, width proportional to length, longest spans the full page width.
     ve = vertical exaggeration (depth stretched x this; 1 = true scale, flat;
@@ -840,6 +852,8 @@ def main():
     ap.add_argument('--div-gap', type=float, default=0.15,
                     help='diverging colour maps skip +/- this band around white '
                          '(0 = classic RdBu through white; default 0.15)')
+    ap.add_argument('--div-white', type=int, default=2,
+                    help='neutral colour levels at the centre of diverging maps (0 = none)')
     ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
                     help='grey veil below the Moho to the bottom of the section (0-1, default 0.5)')
     ap.add_argument('--no-moho-mask', action='store_true', help='Moho line only, no grey veil')
@@ -930,7 +944,7 @@ def main():
               sigma_vsv=args.sigma_vsv, clim_rel=args.clim_rel,
               out_dir=args.out_dir, moho_mask=moho_mask,
               xi_panel=args.xi_panel, xi_ref=args.xi_ref, clim_xi=args.clim_xi,
-              div_gap=args.div_gap)
+              div_gap=args.div_gap, div_white=args.div_white)
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
     sections = []
@@ -994,7 +1008,8 @@ def main():
                    ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax,
                    ncolors=args.ncolors,
                    moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
-                   xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap)
+                   xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap,
+                   div_white=args.div_white)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections
