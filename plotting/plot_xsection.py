@@ -522,85 +522,142 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
 
 
 
-def _ginput_sections(d, moho_file=None):
-    """Show Ndat map, let user pick pairs of (start, end) points interactively.
-    Returns list of (lat1,lon1,lat2,lon2,label). Needs an interactive display."""
-    import matplotlib
-    # Try to switch to an interactive backend; Agg (headless) can't do ginput.
-    for bk in ['TkAgg', 'Qt5Agg', 'QtAgg', 'GTK3Agg']:
+def _name_by_orientation(sections):
+    """N-S lines -> NS1.. (west to east, start at the south end); W-E lines -> EW1..
+    (north to south, start at the west end). Same split as --stack."""
+    out = []
+    for la1, lo1, la2, lo2, _ in sections:
+        dy = abs(la2 - la1)
+        dx = abs(lo2 - lo1) * np.cos(np.radians(0.5 * (la1 + la2)))
+        if dy >= dx and la1 > la2:            # N-S: 0 km at the south end
+            la1, lo1, la2, lo2 = la2, lo2, la1, lo1
+        elif dy < dx and lo1 > lo2:           # W-E: 0 km at the west end
+            la1, lo1, la2, lo2 = la2, lo2, la1, lo1
+        out.append((la1, lo1, la2, lo2, ''))
+    groups, _ = _split_by_orientation(out)
+    named = []
+    for key, pre in (('ns', 'NS'), ('ew', 'EW')):
+        for k, (la1, lo1, la2, lo2, _) in enumerate(groups[key][0]):
+            named.append((la1, lo1, la2, lo2, f'{pre}{k + 1}'))
+    return named
+
+
+def _ginput_sections(d, ref_sections=None, stations=None, tect_npz=None, bnd_npz=None):
+    """Pick sections on the profile-location map (Albers, 2022 tectonic-map colours,
+    crustal boundaries, unit names, stations; ref_sections dashed for reference).
+    Left click = start, left click = end (the great-circle line is drawn at once);
+    right click = undo the last point; Enter = done; Esc = quit without picking.
+    Returns [(lat1, lon1, lat2, lon2, label)] named NS1.. / EW1.. by orientation."""
+    for bk in ['TkAgg', 'QtAgg', 'Qt5Agg', 'GTK3Agg']:
         try:
-            matplotlib.use(bk, force=True)
+            plt.switch_backend(bk)
             break
         except Exception:
             continue
-    import matplotlib.pyplot as plt2
     if matplotlib.get_backend().lower() == 'agg':
         print("ERROR: no interactive backend available (headless?). "
-              "Run on a machine with a display, or use --start/--end / --sections.")
+              "Run on a machine with a display, or use --sections / --load-sections.")
         return []
-
-    Lon = d['Lon']; Lat = d['Lat']
-    Ndat = d['Ndat'].astype(float) if 'Ndat' in d else np.ones(len(Lon))
-
-    # Build a GeoAxes (PlateCarree → clicks come back as lon/lat) with ocean mask
-    _geo = False
+    import cartopy.crs as ccrs
+    from plot_depth_slice import _add_states_ocean
+    import wa_basemap as wb
+    Lon, Lat = np.asarray(d['Lon'], float), np.asarray(d['Lat'], float)
+    tr = ccrs.PlateCarree()
+    proj = ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
+    fig = plt.figure(figsize=(11, 11))
+    ax = fig.add_axes([0.04, 0.04, 0.92, 0.88], projection=proj)
+    cb = (Lon.min() - 1.0, Lon.max() + 1.0, Lat.min() - 1.0, Lat.max() + 1.0)
     try:
-        import cartopy.crs as ccrs
-        import cartopy.feature as cfeature
-        tr = ccrs.PlateCarree()
-        fig2 = plt2.figure(figsize=(10, 10))
-        ax2 = fig2.add_axes([0.06,0.06,0.88,0.88], projection=tr)
-        _geo = True
-    except Exception:
-        fig2, ax2 = plt2.subplots(figsize=(10, 10)); tr = None
+        wb.add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=0)
+        wb.add_crustal_boundaries(ax, bnd_npz, transform=tr, clip_box=cb, zorder=4.2,
+                                  lw_litho=1.1, lw_crust=0.5, alpha=0.85)
+        wb.add_map2022_labels(ax, transform=tr, level=1, scale=1.2, clip_box=cb)
+    except Exception as e:
+        print(f"(map layers unavailable: {e})")
+    _add_states_ocean(ax, ocean='white', states='#e8e8e8')
+    gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=np.arange(100, 151, 5),
+                      ylocs=np.arange(-45, 1, 5), color='#858c8c', linewidth=0.35)
+    gl.top_labels = gl.right_labels = False
+    if stations is not None:
+        ax.scatter(stations[0], stations[1], marker='^', s=12, c='k', edgecolors='w',
+                   linewidths=0.3, zorder=5.5, transform=tr)
+    for la1, lo1, la2, lo2, lab in (ref_sections or []):
+        plat, plon, _ = _great_circle_path(la1, lo1, la2, lo2)
+        ax.plot(plon, plat, '--', color='0.35', lw=1.2, zorder=6, transform=tr)
+        ax.text(lo1, la1, lab, fontsize=7, color='0.35', zorder=6, transform=tr)
+    ax.set_extent([Lon.min() - 0.5, Lon.max() + 0.5, Lat.min() - 0.5, Lat.max() + 0.5], crs=tr)
 
-    gkw = {'transform': tr} if tr else {}
-    # Tectonic background (faint) so sections are picked over geology
-    try:
-        from wa_basemap import add_tectonic_background, add_tectonic_outlines
-        add_tectonic_background(ax2, alpha=0.40, zorder=0, transform=tr)
-        add_tectonic_outlines(ax2, lw=0.4, alpha=0.6, zorder=3, major_only=True, transform=tr)
-        _have_tect = True
-    except Exception as _e:
-        print(f"(tectonic background unavailable: {_e})")
-        _have_tect = False
-    # Coverage dots (semi-transparent) so you also see data density
-    sc = ax2.scatter(Lon, Lat, c=Ndat, cmap='Greys', s=26, vmin=0, vmax=Ndat.max(),
-                     alpha=0.5, zorder=4, edgecolor='none', **gkw)
-    # Grey ocean mask + coastline ON TOP (so offshore/uncovered areas are masked)
-    if _geo:
-        ax2.add_feature(cfeature.OCEAN, facecolor='lightgrey', zorder=5)
-        ax2.coastlines('50m', linewidth=0.8, color='k', zorder=6)
-        ax2.set_extent([Lon.min()-1.0, Lon.max()+1.0,
-                        Lat.min()-1.0, Lat.max()+1.0], crs=tr)
-    else:
-        if not _have_tect:
-            plt2.colorbar(sc, ax=ax2, label='N measurements', shrink=0.7)
-        ax2.set_aspect('equal'); ax2.grid(alpha=0.25)
-    ax2.set_title('Click section endpoints: START, END, START, END ...\n'
-                  'over tectonic domains; middle-click undoes; Enter when done',
-                  fontsize=10)
-    plt2.tight_layout(); plt2.show(block=False)
+    pts, arts, done = [], [], {'ok': False}
 
-    print("\nClick pairs: start, end, start, end ... Enter to finish.")
-    pts = plt2.ginput(n=-1, timeout=0, show_clicks=True,
-                      mouse_add=1, mouse_pop=2, mouse_stop=3)
-    plt2.close(fig2)
+    def lonlat(x, y):
+        return tr.transform_point(x, y, proj)                  # -> (lon, lat)
 
-    if len(pts) < 2:
-        print("Need at least 2 points."); return []
-    if len(pts) % 2 != 0:
-        print(f"Odd number of points ({len(pts)}); dropping the last unpaired click.")
-        pts = pts[:-(1)]
+    def counts():
+        secs = [(pts[k][1], pts[k][0], pts[k + 1][1], pts[k + 1][0], '')
+                for k in range(0, len(pts) - 1, 2)]
+        g, _ = _split_by_orientation(secs) if secs else ({'ns': ([], ''), 'ew': ([], '')}, 0)
+        return len(g['ns'][0]), len(g['ew'][0])
 
-    sections = []
-    for i in range(0, len(pts)-1, 2):
-        lon1, lat1 = pts[i]
-        lon2, lat2 = pts[i+1]
-        label = f'sec{i//2+1}'
-        sections.append((lat1, lon1, lat2, lon2, label))
-        print(f"  {label}: ({lat1:.2f},{lon1:.2f}) -> ({lat2:.2f},{lon2:.2f})")
-    return sections
+    def title():
+        nns, new = counts()
+        ax.set_title(f'Pick sections: click START then END.  Right click = undo,  Enter = done,  '
+                     f'Esc = quit\nN-S: {nns}   W-E: {new}' +
+                     ('   (dashed grey = current lines)' if ref_sections else ''), fontsize=10)
+        fig.canvas.draw_idle()
+
+    def on_click(ev):
+        tb = getattr(fig.canvas, 'toolbar', None)
+        if ev.inaxes is not ax or (tb is not None and getattr(tb, 'mode', '')):
+            return                                             # zoom/pan active
+        if ev.button == 1:
+            lo, la = lonlat(ev.xdata, ev.ydata)
+            pts.append((lo, la))
+            if len(pts) % 2:
+                arts.append([ax.plot(lo, la, 'o', color='k', ms=6, zorder=8, transform=tr)[0]])
+            else:
+                (lo1, la1), (lo2, la2) = pts[-2], pts[-1]
+                plat, plon, dist = _great_circle_path(la1, lo1, la2, lo2)
+                a = ax.plot(plon, plat, '-', color='k', lw=2.2, zorder=8, transform=tr)
+                a += ax.plot(lo2, la2, 's', color='k', ms=6, zorder=8, transform=tr)
+                a.append(ax.text(0.5 * (lo1 + lo2), 0.5 * (la1 + la2), f'{dist[-1]:.0f} km',
+                                 fontsize=8, color='darkred', zorder=9, transform=tr,
+                                 bbox=dict(fc='w', ec='none', alpha=0.7, pad=0.5)))
+                arts.append(a)
+                print(f"  line {len(pts) // 2}: ({la1:.2f},{lo1:.2f}) -> ({la2:.2f},{lo2:.2f}), "
+                      f"{dist[-1]:.0f} km")
+            title()
+        elif ev.button == 3 and pts:
+            pts.pop()
+            for a in arts.pop():
+                a.remove()
+            title()
+
+    def on_key(ev):
+        if ev.key == 'enter':
+            done['ok'] = True
+            plt.close(fig)
+        elif ev.key == 'escape':
+            plt.close(fig)
+
+    fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    title()
+    print("\nPick: left click start, left click end (repeat); right click undoes; "
+          "Enter when done, Esc to quit.")
+    plt.show(block=True)
+    if not done['ok']:
+        print("Picking cancelled - nothing saved.")
+        return []
+    if len(pts) % 2:
+        print("Odd number of clicks; dropping the last unpaired point.")
+        pts.pop()
+    secs = [(pts[k][1], pts[k][0], pts[k + 1][1], pts[k + 1][0], '')
+            for k in range(0, len(pts), 2)]
+    named = _name_by_orientation(secs)
+    for la1, lo1, la2, lo2, lab in named:
+        print(f"  {lab}: ({la1:.2f},{lo1:.2f}) -> ({la2:.2f},{lo2:.2f})")
+    plt.switch_backend('Agg')
+    return named
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def _index_footprint(args):
@@ -808,6 +865,11 @@ def _split_by_orientation(sections):
 
 
 def _save_sections(sections, path):
+    if os.path.isfile(path):                          # keep the old list
+        import shutil, time
+        bak = f"{path}.bak.{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(path, bak)
+        print(f"  previous sections kept as {bak}")
     with open(path, 'w') as f:
         f.write("# lat1 lon1 lat2 lon2 label\n")
         for lat1, lon1, lat2, lon2, lab in sections:
@@ -1013,8 +1075,10 @@ def main():
     ap.add_argument('--ncolors',   type=int,   default=16,
                     help='Discrete colour levels per colormap (default 16; e.g. 32 for finer)')
     ap.add_argument('--ginput',  action='store_true',
-                    help='Pick section endpoints interactively from Ndat map. '
-                         'Click pairs of points (start,end) — Enter to finish.')
+                    help='Pick sections interactively on the profile-location map (2022 '
+                         'colours, boundaries, stations); with --load-sections the current '
+                         'lines are shown dashed. Lines are named NS1../EW1.. by orientation. '
+                         'Combine with --save-sections FILE (old file kept as FILE.bak.<time>)')
     ap.add_argument('--moho',      default=None,
                     help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
     ap.add_argument('--xi-panel', default='xi', choices=['xi', 'dxi', 'both'],
@@ -1174,11 +1238,24 @@ def main():
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
     sections = []
-    if args.load_sections:
+    if args.ginput:                       # --load-sections then only shows the current lines
+        ref = _load_sections(args.load_sections) if args.load_sections else None
+        sta = None
+        try:
+            import config
+            if os.path.isfile(args.stations or config.STATIONS):
+                sta = _load_stations(args.stations or config.STATIONS, config.STATION_COLS)
+        except Exception:
+            pass
+        sections = _ginput_sections(
+            d, ref_sections=ref, stations=sta,
+            tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
+            bnd_npz=_resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', args.bnd_npz))
+        if not sections:
+            sys.exit("No sections picked.")
+    elif args.load_sections:
         sections = _load_sections(args.load_sections)
         print(f"Loaded {len(sections)} sections from {args.load_sections}")
-    elif args.ginput:
-        sections = _ginput_sections(d)
     elif args.sections:
         for k, sec in enumerate(args.sections):
             parts = sec.split('/')
