@@ -231,31 +231,35 @@ def _signed_area(r):
     return 0.5 * (np.dot(r[:, 0], np.roll(r[:, 1], -1)) - np.dot(r[:, 1], np.roll(r[:, 0], -1)))
 
 
-def _compound(rings):
-    """One Path from the rings of one unit, filled correctly under matplotlib's
-    nonzero rule: rings nested an odd number of times in the others are holes
-    (wound clockwise), the rest outer rings (anticlockwise)."""
+def _orient(rings):
+    """Rings of one unit wound for nonzero filling: rings nested an odd number of times in
+    the others are holes (clockwise), the rest outer rings (anticlockwise)."""
     from matplotlib.path import Path
     paths = [Path(r) for r in rings]
-    verts, codes = [], []
+    out = []
     for i, r in enumerate(rings):
         depth = sum(paths[j].contains_point(r[0]) for j in range(len(rings)) if j != i)
         ccw = _signed_area(r) > 0
-        if ccw == bool(depth % 2):          # hole must be CW, outer CCW
-            r = r[::-1]
+        out.append(r[::-1] if ccw == bool(depth % 2) else r)
+    return out
+
+
+def _compound(rings):
+    """One Path from already-oriented rings (see _orient)."""
+    from matplotlib.path import Path
+    verts, codes = [], []
+    for r in rings:
         verts += list(r) + [r[0]]
         codes += [Path.MOVETO] + [Path.LINETO] * (len(r) - 1) + [Path.CLOSEPOLY]
     return Path(np.array(verts), codes)
 
 
-def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
-                      edgecolor='0.3', lw=0.2, alpha=1.0, verbose=True):
-    """GSWA 10M tectonic units filled like the 2022 Simplified Tectonic Map of WA:
-    colour by unit name (TECTNAME), then its parent, from tectonic_map_2022_colours.csv;
-    then the shapefile TECTCOLOUR; then the parent-domain colour. Rings of one unit
-    form one compound path (holes are holes); units are drawn big-first so inliers
-    sit on top. Returns {source: n_units} for the colour sources used."""
-    from matplotlib.collections import PathCollection
+def map2022_unit_shapes(npz=None, clip_box=None):
+    """The 10M units as drawn on the index map: [{name, colour, rings, area}], big first.
+    Colour by unit name (TECTNAME), then parent, from tectonic_map_2022_colours.csv; then
+    TECTCOLOUR; then the parent-domain colour; 'none' units (concealed) are left out.
+    rings are lon/lat arrays, outer anticlockwise and holes clockwise.
+    Returns (shapes, {colour source: n_units})."""
     d = np.load(npz, allow_pickle=True) if npz else _load()
     rings = d['rings']
     names = d['names'].astype(str) if 'names' in d.files else d['parents'].astype(str)
@@ -269,11 +273,7 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
         if len(r) < 3 or not _in_box(r, clip_box):
             continue
         groups.setdefault(key[i], []).append(i)
-    items, src = [], {}
-    proj = getattr(ax, 'projection', None)
-    pre = proj is not None and hasattr(transform, 'transform_points')
-    if pre:   # project vertices ourselves: keeps the hole winding, avoids cartopy's path re-noding
-        P = lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]
+    shapes, src = [], {}
     for idx in groups.values():
         i0 = idx[0]
         c, s = (table.get(names[i0].strip().lower()), 'map2022')
@@ -285,14 +285,28 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
             src['hidden'] = src.get('hidden', 0) + 1
             continue
         src[s] = src.get(s, 0) + 1
-        rr = [np.asarray(rings[i], float)[:, :2] for i in idx]
-        area = max(abs(_signed_area(r)) for r in rr)
-        if pre:
-            rr = [P(r) for r in rr]
-        items.append((area, _compound(rr), c))
-    items.sort(key=lambda t: -t[0])
+        rr = _orient([np.asarray(rings[i], float)[:, :2] for i in idx])
+        shapes.append(dict(name=str(names[i0]), colour=c, rings=rr,
+                           area=max(abs(_signed_area(r)) for r in rr)))
+    shapes.sort(key=lambda t: -t['area'])
+    return shapes, src
+
+
+def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
+                      edgecolor='0.3', lw=0.2, alpha=1.0, verbose=True):
+    """GSWA 10M tectonic units filled like the 2022 Simplified Tectonic Map of WA
+    (see map2022_unit_shapes). Rings of one unit form one compound path (holes are
+    holes); units are drawn big-first so inliers sit on top.
+    Returns {source: n_units} for the colour sources used."""
+    from matplotlib.collections import PathCollection
+    shapes, src = map2022_unit_shapes(npz, clip_box)
+    proj = getattr(ax, 'projection', None)
+    pre = proj is not None and hasattr(transform, 'transform_points')
+    if pre:   # project vertices ourselves: keeps the hole winding, avoids cartopy's path re-noding
+        P = lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]
+    paths = [_compound([P(r) for r in sh['rings']] if pre else sh['rings']) for sh in shapes]
     kw = {'transform': ax.transData if pre else transform} if transform is not None else {}
-    ax.add_collection(PathCollection([p for _, p, _ in items], facecolors=[c for *_, c in items],
+    ax.add_collection(PathCollection(paths, facecolors=[sh['colour'] for sh in shapes],
                                      edgecolors=edgecolor, linewidths=lw, alpha=alpha,
                                      zorder=zorder, **kw))
     if verbose:
@@ -387,43 +401,52 @@ _LABEL_STYLE = {      # class -> colour, weight; letter-spaced = orogens (as on 
 }
 
 
-def add_map2022_labels(ax, transform=None, level=1, scale=1.4, clip_box=None, zorder=6.8,
-                       halo=True):
-    """Unit names at the GSWA 2022 map's own label positions (tectonic_map_2022_labels.csv):
-    cratons red bold, terranes/inliers red, orogens grey letter-spaced, basins and provinces
-    black. level 1 = major units only, 2 = all. scale multiplies the A4 map's font sizes.
-    Angles are the map's (Albers screen angles). Returns the number drawn."""
+def map2022_label_items(level=1, clip_box=None):
+    """Unit labels of tectonic_map_2022_labels.csv as drawn: [{text, lon, lat, angle,
+    colour, weight, size_pt}] (orogen names letter-spaced with plain spaces)."""
     import csv
-    import matplotlib.patheffects as pe
     path = os.path.join(_HERE, 'tectonic_map_2022_labels.csv')
     if not os.path.isfile(path):
         print(f"  (no {path}: unit labels not drawn)")
-        return 0
-    rows = csv.DictReader(l for l in open(path, encoding='utf-8') if not l.startswith('#'))
-    fam = _narrow_font()
-    eff = [pe.withStroke(linewidth=1.8, foreground='white', alpha=0.75)] if halo else None
-    kw = {'transform': transform} if transform is not None else {}
-    n = 0
-    for r in rows:
+        return []
+    out = []
+    for r in csv.DictReader(l for l in open(path, encoding='utf-8') if not l.startswith('#')):
         if int(r['level']) > level:
             continue
         lon, lat = float(r['lon']), float(r['lat'])
         if clip_box is not None and not (clip_box[0] <= lon <= clip_box[1]
                                          and clip_box[2] <= lat <= clip_box[3]):
             continue
-        col, wt, spaced = _LABEL_STYLE.get(r['class'], ('k', 'normal', False))
+        col, wt, spaced = _LABEL_STYLE.get(r['class'], ('#000000', 'normal', False))
         text = r['text'].replace('\\n', '\n')
         if spaced:
             # letter-spaced with plain spaces (every font has them; thin/en spaces are
             # missing from e.g. Liberation Sans Narrow): 1 between letters, 3 between words
             text = '\n'.join('   '.join(' '.join(w) for w in line.split(' '))
                              for line in text.split('\n'))
-        ax.text(lon, lat, text, color=col, fontsize=float(r['size_pt']) * scale, family=fam,
-                weight='bold' if int(r['bold']) else wt, rotation=float(r['angle']),
-                rotation_mode='anchor', ha='center', va='center', multialignment='center',
-                linespacing=1.0, zorder=zorder, path_effects=eff, clip_on=True, **kw)
-        n += 1
-    return n
+        out.append(dict(text=text, lon=lon, lat=lat, angle=float(r['angle']), colour=col,
+                        weight='bold' if int(r['bold']) else wt, size_pt=float(r['size_pt'])))
+    return out
+
+
+def add_map2022_labels(ax, transform=None, level=1, scale=1.4, clip_box=None, zorder=6.8,
+                       halo=True):
+    """Unit names at the GSWA 2022 map's own label positions (tectonic_map_2022_labels.csv):
+    cratons red bold, terranes/inliers red, orogens grey letter-spaced, basins and provinces
+    black. level 1 = major units only, 2 = all. scale multiplies the A4 map's font sizes.
+    Angles are the map's (Albers screen angles). Returns the number drawn."""
+    import matplotlib.patheffects as pe
+    fam = _narrow_font()
+    eff = [pe.withStroke(linewidth=1.8, foreground='white', alpha=0.75)] if halo else None
+    kw = {'transform': transform} if transform is not None else {}
+    items = map2022_label_items(level, clip_box)
+    for it in items:
+        ax.text(it['lon'], it['lat'], it['text'], color=it['colour'],
+                fontsize=it['size_pt'] * scale, family=fam, weight=it['weight'],
+                rotation=it['angle'], rotation_mode='anchor', ha='center', va='center',
+                multialignment='center', linespacing=1.0, zorder=zorder, path_effects=eff,
+                clip_on=True, **kw)
+    return len(items)
 
 
 def _boundaries_npz(path=None):

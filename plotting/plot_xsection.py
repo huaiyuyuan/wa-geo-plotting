@@ -790,6 +790,23 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
     print(f"Index map: {out}")
 
 
+def _split_by_orientation(sections):
+    """{'ns': (sections, title), 'ew': (...)} by the line's overall bearing (north-south if
+    it spans more km in latitude than in longitude). N-S lines are ordered west to east,
+    W-E lines north to south, as they sit on the map. Also returns the longest length
+    (km) so both pages share one horizontal scale."""
+    ns, ew, longest = [], [], 0.0
+    for s in sections:
+        la1, lo1, la2, lo2, _ = s
+        dy = abs(la2 - la1)
+        dx = abs(lo2 - lo1) * np.cos(np.radians(0.5 * (la1 + la2)))
+        (ns if dy >= dx else ew).append(s)
+        longest = max(longest, _great_circle_path(la1, lo1, la2, lo2)[2][-1])
+    ns.sort(key=lambda s: 0.5 * (s[1] + s[3]))
+    ew.sort(key=lambda s: -0.5 * (s[0] + s[2]))
+    return {'ns': (ns, 'North-south'), 'ew': (ew, 'West-east')}, longest
+
+
 def _save_sections(sections, path):
     with open(path, 'w') as f:
         f.write("# lat1 lon1 lat2 lon2 label\n")
@@ -815,7 +832,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
                ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
                xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None, clim_vpvs=3.0,
-               clim_diff=4.0):
+               clim_diff=4.0, maxd_km=None, tag='', group=''):
     global DIV_GAP, DIV_WHITE
     if div_gap is not None:
         DIV_GAP = div_gap
@@ -880,6 +897,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
         prof.append(dict(lab=lab,dist=dist,data=samp,moho=mp,plat=plat,plon=plon))
     maxd=max(p['dist'][-1] for p in prof)
+    if maxd_km:                 # shared scale across split pages (same km/inch on each)
+        maxd=max(maxd, maxd_km)
 
     # Horizontal scale: longest fills page_w_in. Row height from VE:
     #   km_per_in = maxd/page_w_in ; row_h_in = zbot*ve/km_per_in
@@ -913,8 +932,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     fname = {'dxi': 'dlnXi', 'vpvs': 'Vp/Vs', 'dvpvs': 'dln(Vp/Vs)',
              'vdiff': f'{os.path.basename(getattr(plot_section, "_fvsname", "")).replace(".npz", "")}'
                       f' minus {_REF["label"] if _REF else "ref"}'}.get(field, field.upper())
-    fig.suptitle(f'{fname} ({vname}) — {n} sections [depth 0-{zbot:.0f} km, '
-                 f'longest {maxd:.0f} km, VE {ve:.0f}x]',
+    fig.suptitle(f'{fname} ({vname}) — {group + " " if group else ""}{n} sections '
+                 f'[depth 0-{zbot:.0f} km, page width {maxd:.0f} km, VE {ve:.0f}x]',
                  fontsize=11, fontweight='bold')
 
     usable=page_w_in/fig_w
@@ -964,7 +983,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     if geo_res:
         _geology_legend(fig, geo_res, ax, below_in=0.55)
     os.makedirs(out_dir,exist_ok=True)
-    out=os.path.join(out_dir,f'xsection_stack.{field}.png')
+    out=os.path.join(out_dir,f'xsection_stack.{field}{tag}.png')
     fig.savefig(out,dpi=150,bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'),bbox_inches='tight')
     plt.close(fig)
@@ -1042,6 +1061,10 @@ def main():
                     help='Fixed colour min for the stacked field (all panels same scale)')
     ap.add_argument('--vmax', type=float, default=None,
                     help='Fixed colour max for the stacked field')
+    ap.add_argument('--stack-split', default='orient', choices=['orient', 'none'],
+                    help='--stack: orient = two pages, north-south lines (.ns, ordered W->E) and '
+                         'west-east lines (.ew, ordered N->S), same km/inch (default); '
+                         'none = all sections on one page')
     ap.add_argument('--stack-ve', type=float, default=DEFAULT_VE,
                     help='Vertical exaggeration for stacked sections (1=true scale/flat, higher=taller; default 3).')
     ap.add_argument('--index-map', action='store_true',
@@ -1211,14 +1234,20 @@ def main():
     if args.stack:
         zmask=(d['z']<=args.d_max) if args.d_max else np.ones(len(d['z']),bool)
         rmean=np.array([np.nanmean(d['Vsv'][:,zmask][:,k]) for k in range(zmask.sum())])
-        plot_stack(d, sections, args.stack, args.out_dir, moho_file=args.moho,
-                   ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
-                   ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax,
-                   ncolors=args.ncolors,
-                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
-                   xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap,
-                   div_white=args.div_white, clim_vpvs=args.clim_vpvs,
-                   clim_diff=args.clim_diff)
+        kw = dict(moho_file=args.moho, ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
+                  ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax, ncolors=args.ncolors,
+                  moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
+                  xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap,
+                  div_white=args.div_white, clim_vpvs=args.clim_vpvs, clim_diff=args.clim_diff)
+        if args.stack_split == 'none':
+            plot_stack(d, sections, args.stack, args.out_dir, **kw)
+            return
+        groups, longest = _split_by_orientation(sections)
+        for key, (secs, title) in groups.items():
+            if secs:
+                print(f"  {title}: {', '.join(s[4] for s in secs)}")
+                plot_stack(d, secs, args.stack, args.out_dir, maxd_km=longest,
+                           tag=f'.{key}', group=title.lower(), **kw)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections

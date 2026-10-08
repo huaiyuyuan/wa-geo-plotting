@@ -78,6 +78,26 @@ bottom/left as on the PDF. Legend and labels come from the PDF via
 `extract/make_map2022_assets.py` (needs pdfplumber; outputs
 `basemap/tectonic_map_2022_legend.json`, `tectonic_map_2022_labels.csv` are committed).
 
+## Stacked cross-sections
+`plot_xsection.py --stack FIELD` puts all sections on one page per orientation:
+`xsection_stack.<field>.ns` (north-south lines, ordered west to east) and `.ew` (west-east
+lines, north to south), on one shared km/inch. `--stack-split none` = everything on one page.
+
+## MATLAB version of the map and stacks
+```
+python3 plotting/export_matlab.py --fvs $FVS_ZT --vel vsv_true --load-sections $XS \
+    --moho $MOHO --out $ST/figures/iter8/wa_plotdata.mat [--footprint] [--labels all]
+```
+Then in MATLAB, with `matlab/` on the path (base MATLAB, R2017b+; no toolboxes):
+```
+wa_plot_map('wa_plotdata.mat')            % xsection_index_map.png/.pdf
+wa_plot_stack('wa_plotdata.mat', 'dvsv')  % xsection_stack.dvsv.ns/.ew png/pdf ('vsv','xi','dxi')
+```
+The .mat holds the drawn geometry and colours (units in the 2022 map colours, boundaries,
+Natural Earth sea/states/coast, labels, the vector legend, stations, sections) and, per
+section, the sampled model fields, Moho, domain-strip runs and boundary crossings, plus the
+exact colour maps; `matlab/wa_albers.m` is the map projection.
+
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.
 make_Fvs.py / read_posterior.py stay in noise_asdf; this repo takes the Fvs npz
