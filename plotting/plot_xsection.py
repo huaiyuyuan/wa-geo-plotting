@@ -629,7 +629,8 @@ def _load_stations(path, cols=(2, 1)):
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                     litho_npz=None, tick_km=100, stations=None, style='map2022',
                     footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
-                    projection='albers', legend='upper left'):
+                    projection='albers', legend='upper left', labels='major',
+                    label_scale=1.4):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -671,6 +672,11 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         if style == 'map2022':
             from wa_basemap import add_map2022_units, add_crustal_boundaries
             add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=0)
+            if labels and labels != 'none':
+                from wa_basemap import add_map2022_labels
+                nl = add_map2022_labels(ax, transform=tr, level=1 if labels == 'major' else 2,
+                                        scale=label_scale, clip_box=cb)
+                print(f"  unit labels: {nl} ({labels})")
             try:
                 add_crustal_boundaries(ax, bnd_npz, transform=tr, clip_box=cb, zorder=4.2,
                                        lw_litho=1.1, lw_crust=0.5, alpha=0.85)
@@ -1081,6 +1087,11 @@ def main():
                     choices=['upper left', 'upper right', 'lower left', 'lower right', 'none'],
                     help='--index-map (map2022 style): corner for the GSWA 2022 map legend '
                          '(rock type x age chart); none = omit')
+    ap.add_argument('--index-labels', default='major', choices=['major', 'all', 'none'],
+                    help='--index-map (map2022 style): unit names at the GSWA map positions - '
+                         'major = cratons, terranes, orogens, main basins (default); all')
+    ap.add_argument('--label-scale', type=float, default=1.4,
+                    help='unit label size relative to the A4 GSWA map (default 1.4)')
     ap.add_argument('--index-plain', action='store_true',
                     help='--index-map: tectonic colours only (no craton granite/greenstone)')
     ap.add_argument('--tect-npz',  default=None, help='override tectonics npz')
@@ -1182,6 +1193,7 @@ def main():
                         bnd_npz=_resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
                                              args.bnd_npz),
                         projection=args.index_proj, legend=args.index_legend,
+                        labels=args.index_labels, label_scale=args.label_scale,
                         litho_npz=None if args.index_plain else
                         _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
         if args.index_only:

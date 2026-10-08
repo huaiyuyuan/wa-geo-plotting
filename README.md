@@ -70,9 +70,13 @@ Default `--index-style map2022`: 10M units filled with the 2022 simplified-tecto
 colours, major crustal boundaries, stations, sections with distance ticks, drawn in the
 map's own projection (`--index-proj albers`: Albers equal-area, central meridian 121°E,
 standard parallels 17.5°S/31.5°S, fitted to the PDF graticule; `plate` = plain lon/lat).
-The map's own legend (rock type x age chart, `basemap/tectonic_map_2022_legend.png`, cut
-from the PDF) is inset top-left (`--index-legend` corner or `none`); 5° graticule in the
-map's grey, labelled bottom/left as on the PDF.
+The map's own legend (rock type x age chart) is inset top-left as vectors
+(`--index-legend` corner or `none`); unit names sit at GSWA's label positions
+(`--index-labels major|all|none`, `--label-scale`): cratons red bold, terranes red, orogens
+grey letter-spaced, basins/provinces black. 5° graticule in the map's grey, labelled
+bottom/left as on the PDF. Legend and labels come from the PDF via
+`extract/make_map2022_assets.py` (needs pdfplumber; outputs
+`basemap/tectonic_map_2022_legend.json`, `tectonic_map_2022_labels.csv` are committed).
 
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.

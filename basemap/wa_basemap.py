@@ -297,31 +297,128 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
     return src
 
 
-def add_map2022_legend(ax, loc='upper left', width_in=3.0, anchor=None, fontsize=7,
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_NARROW = None
+
+
+def _narrow_font():
+    """A condensed sans like the GSWA map's Arial Narrow if installed, else DejaVu Sans
+    (text is fitted to the original lengths either way)."""
+    global _NARROW
+    if _NARROW is None:
+        from matplotlib import font_manager
+        have = {f.name for f in font_manager.fontManager.ttflist}
+        _NARROW = next((f for f in ('Arial Narrow', 'Liberation Sans Narrow', 'Nimbus Sans Narrow',
+                                    'Arial') if f in have), 'DejaVu Sans')
+    return _NARROW
+
+
+def add_map2022_legend(ax, loc='upper left', width_in=3.2, anchor=None, fontsize=7,
                        title='Tectonic units: rock type and age (GSWA 2022)', zorder=22):
-    """Inset the legend chart of the GSWA 2022 simplified tectonic map (rock type x age,
-    cut from the PDF at 400 dpi: tectonic_map_2022_legend.png, CC BY 4.0) on a white
-    panel. anchor = (x, y) in axes fractions for the `loc` corner (default: that corner).
-    Returns the AnchoredOffsetbox, or None if the image is missing."""
-    from matplotlib.offsetbox import AnchoredOffsetbox, OffsetImage, TextArea, VPacker
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tectonic_map_2022_legend.png')
+    """The legend chart of the GSWA 2022 simplified tectonic map (rock type x age), redrawn
+    as vectors from tectonic_map_2022_legend.json (extract/make_map2022_assets.py), on a
+    white panel width_in wide. loc = corner; anchor = (x, y) axes fraction of that corner.
+    Call after the map extent is set. Returns the inset axes."""
+    import json
+    from matplotlib.patches import Polygon as Poly
+    path = os.path.join(_HERE, 'tectonic_map_2022_legend.json')
     if not os.path.isfile(path):
         print(f"  (no {path}: map legend not drawn)")
         return None
-    img = plt.imread(path)
-    child = OffsetImage(img, zoom=width_in * 72.0 / img.shape[1])   # size in points
-    parts = [child] if not title else [TextArea(title, textprops=dict(size=fontsize,
-                                                                    weight='bold')), child]
-    box = VPacker(children=parts, align='left', pad=0, sep=3)
+    L = json.load(open(path))
+    W, H = L['width'], L['height']
+    pad, top = 4.0, (13.0 if title else 4.0)                   # PDF pt
+    fig = ax.figure
+    ax.apply_aspect()
+    pos = ax.get_position()
+    fw, fh = fig.get_size_inches()
+    k = width_in / (W + 2 * pad)                               # inches per PDF pt
+    w_ax = width_in / (pos.width * fw)
+    h_ax = k * (H + pad + top) / (pos.height * fh)
     if anchor is None:
         anchor = {'upper left': (0.01, 0.99), 'upper right': (0.99, 0.99),
                   'lower left': (0.01, 0.01), 'lower right': (0.99, 0.01)}[loc]
-    ab = AnchoredOffsetbox(loc=loc, child=box, pad=0.35, borderpad=0, frameon=True,
-                           bbox_to_anchor=anchor, bbox_transform=ax.transAxes)
-    ab.patch.set(facecolor='white', edgecolor='0.6', linewidth=0.6, alpha=0.95)
-    ab.set_zorder(zorder)
-    ax.add_artist(ab)
-    return ab
+    x0 = anchor[0] - (w_ax if 'right' in loc else 0)
+    y0 = anchor[1] - (h_ax if 'upper' in loc else 0)
+    ia = ax.inset_axes([x0, y0, w_ax, h_ax], zorder=zorder)
+    ia.set_xlim(-pad, W + pad); ia.set_ylim(-pad, H + top)
+    ia.set_xticks([]); ia.set_yticks([])
+    ia.set_facecolor('white'); ia.patch.set_alpha(0.95)
+    for sp in ia.spines.values():
+        sp.set_edgecolor('0.6'); sp.set_linewidth(0.6)
+    pt = k * 72.0                                              # 1 PDF pt -> points on the figure
+    for sh in L['shapes']:
+        xy = np.asarray(sh['pts'], float)
+        if sh['fill'] or sh['closed']:
+            ia.add_patch(Poly(xy, closed=True, facecolor=sh['fill'] or 'none',
+                              edgecolor=sh['stroke'] or 'none',
+                              linewidth=(sh['lw'] * pt) if sh['stroke'] else 0))
+        else:
+            ia.plot(xy[:, 0], xy[:, 1], color=sh['stroke'] or 'k',
+                    lw=max(sh['lw'] * pt, 0.3), solid_capstyle='butt')
+    fam = _narrow_font()
+    renderer = fig.canvas.get_renderer()
+    for t in L['texts']:
+        if t['rot']:
+            xy, length = ((t['x0'] + t['x1']) / 2, (t['y0'] + t['y1']) / 2), t['y1'] - t['y0']
+        else:
+            xy, length = ((t['x0'] + t['x1']) / 2, t['y'] + 0.42 * t['size']), t['x1'] - t['x0']
+        txt = ia.text(*xy, t['s'], rotation=t['rot'], ha='center', va='center',
+                      fontsize=t['size'] * pt, family=fam)
+        bb = txt.get_window_extent(renderer)
+        got = (bb.height if t['rot'] else bb.width) * 72.0 / fig.dpi
+        want = length * pt
+        if got > 0 and abs(got / want - 1) > 0.03:             # fit to the original length
+            txt.set_fontsize(t['size'] * pt * want / got)
+    if title:
+        ia.text(-pad + 3, H + top - 2.5, title, ha='left', va='top', fontsize=fontsize,
+                weight='bold')
+    return ia
+
+
+_LABEL_STYLE = {      # class -> colour, weight; letter-spaced = orogens (as on the GSWA map)
+    'craton':  ('#ed1c24', 'bold', False),
+    'terrane': ('#ed1c24', 'normal', False),
+    'orogen':  ('#717774', 'normal', True),
+    'basin':   ('#000000', 'normal', False),
+}
+
+
+def add_map2022_labels(ax, transform=None, level=1, scale=1.4, clip_box=None, zorder=6.8,
+                       halo=True):
+    """Unit names at the GSWA 2022 map's own label positions (tectonic_map_2022_labels.csv):
+    cratons red bold, terranes/inliers red, orogens grey letter-spaced, basins and provinces
+    black. level 1 = major units only, 2 = all. scale multiplies the A4 map's font sizes.
+    Angles are the map's (Albers screen angles). Returns the number drawn."""
+    import csv
+    import matplotlib.patheffects as pe
+    path = os.path.join(_HERE, 'tectonic_map_2022_labels.csv')
+    if not os.path.isfile(path):
+        print(f"  (no {path}: unit labels not drawn)")
+        return 0
+    rows = csv.DictReader(l for l in open(path, encoding='utf-8') if not l.startswith('#'))
+    fam = _narrow_font()
+    eff = [pe.withStroke(linewidth=1.8, foreground='white', alpha=0.75)] if halo else None
+    kw = {'transform': transform} if transform is not None else {}
+    n = 0
+    for r in rows:
+        if int(r['level']) > level:
+            continue
+        lon, lat = float(r['lon']), float(r['lat'])
+        if clip_box is not None and not (clip_box[0] <= lon <= clip_box[1]
+                                         and clip_box[2] <= lat <= clip_box[3]):
+            continue
+        col, wt, spaced = _LABEL_STYLE.get(r['class'], ('k', 'normal', False))
+        text = r['text'].replace('\\n', '\n')
+        if spaced:
+            text = '\n'.join('\u2009'.join(w) for w in text.split('\n')).replace(
+                '\u2009 \u2009', '\u2002')
+        ax.text(lon, lat, text, color=col, fontsize=float(r['size_pt']) * scale, family=fam,
+                weight='bold' if int(r['bold']) else wt, rotation=float(r['angle']),
+                rotation_mode='anchor', ha='center', va='center', multialignment='center',
+                linespacing=1.0, zorder=zorder, path_effects=eff, clip_on=True, **kw)
+        n += 1
+    return n
 
 
 def _boundaries_npz(path=None):

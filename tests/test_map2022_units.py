@@ -52,6 +52,22 @@ def test_colours_holes_inliers():
     plt.close(fig)
 
 
+def test_legend_and_labels_smoke():
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.set_xlim(112, 130); ax.set_ylim(-36, -13)
+    ia = wb.add_map2022_legend(ax)
+    assert ia is not None and len(ia.patches) > 15 and len(ia.texts) >= 20
+    n1 = wb.add_map2022_labels(ax, level=1)
+    n2 = wb.add_map2022_labels(ax, level=2)
+    assert 20 <= n1 < n2
+    names = [t.get_text().replace("\u2009", "") for t in ax.texts]
+    assert "YILGARN CRATON" in names and any("CAPRICORN" in n for n in names)
+    fig.savefig(Path(tempfile.mkdtemp()) / "leg.png", dpi=60)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
+    test_legend_and_labels_smoke()
+    print("ok  test_legend_and_labels_smoke")
     test_colours_holes_inliers()
-    print("ok  test_colours_holes_inliers\n1 passed")
+    print("ok  test_colours_holes_inliers\n2 passed")
