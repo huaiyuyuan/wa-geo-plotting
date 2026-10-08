@@ -116,9 +116,17 @@ def test_class_key_names_and_fallback(tmp_path=None):
     np.savez(td / "with.npz", names=np.array(["Youanmi Terrane", "Kalgoorlie Terrane"]), **common)
     np.savez(td / "without.npz", **common)
     lon, lat = np.array([118.0, 122.0]), np.array([-30.0, -30.0])
-    t = xs.PolygonIndex.from_npz(td / "with.npz", class_key="names")
+    t = xs.PolygonIndex.from_npz(td / "with.npz", class_key="names", colours="palette")
     assert list(t.parents[t.sample(lon, lat)]) == ["Youanmi Terrane", "Kalgoorlie Terrane"]
     assert t.colors[0] != t.colors[1]            # palette, not the shared craton colour
+    # 2022 tectonic-map colours: by name (Youanmi), else by parent (Kalgoorlie -> Yilgarn)
+    m = xs.PolygonIndex.from_npz(td / "with.npz", class_key="names", colours="map2022")
+    assert [c[:7] for c in m.colors] == ["#fbcbbb", "#fbcbbb"]
+    np.savez(td / "other.npz", names=np.array(["South West Terrane", "Unknown Unit"]),
+             rings=rings, colors=np.array(["#2ca02c"] * 2), parents=np.array(["Nowhere"] * 2),
+             tect_colors=np.array(["", "#123456"]))
+    o = xs.PolygonIndex.from_npz(td / "other.npz", class_key="names", colours="map2022")
+    assert o.colors[0][:7] == "#f597a9" and o.colors[1][:7] == "#123456"   # table, then TECTCOLOUR
     f = xs.PolygonIndex.from_npz(td / "without.npz", class_key="names")
     assert set(f.parents) == {"Yilgarn Craton"}  # graceful fallback
 

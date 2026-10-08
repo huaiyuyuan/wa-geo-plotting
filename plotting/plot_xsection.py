@@ -65,7 +65,8 @@ def _resolve_npz(cfg_name, fname, override=None):
     return None
 
 
-def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False):
+def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False,
+                  domain_colours='map2022'):
     import xsection_strips as xs
     want = {w.strip() for w in spec.split(',') if w.strip()}
     bad = want - _STRIP_ITEMS
@@ -76,7 +77,7 @@ def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False
     jobs = (('litho', 'litho', 'LITHOLOGY_NPZ', 'wa_lithology.npz', litho_npz,
              xs.PolygonIndex.from_npz),
             ('domain', 'tect', 'TECTONICS_NPZ', 'wa_tectonics.npz', tect_npz,
-             lambda p: xs.PolygonIndex.from_npz(p, class_key='names')),
+             lambda p: xs.PolygonIndex.from_npz(p, class_key='names', colours=domain_colours)),
             ('boundaries', 'bnd', 'BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
              bnd_npz, xs.BoundarySet.from_npz))
     for item, key, cfg, fname, ov, loader in jobs:
@@ -1003,6 +1004,10 @@ def main():
     ap.add_argument('--no-strips', action='store_true', help='plain sections, no geology strips')
     ap.add_argument('--index-only', action='store_true',
                     help='with --index-map: draw only the map, do not re-plot any sections')
+    ap.add_argument('--domain-colours', default='map2022',
+                    choices=['map2022', 'tectcolour', 'palette'],
+                    help='domain strip colours: map2022 = GSWA simplified tectonic map 2022 '
+                         '(default); tectcolour = shapefile TECTCOLOUR; palette = pastel')
     ap.add_argument('--bnd-lines', action='store_true',
                     help='also draw boundary crossings as dashed lines through the model '
                          'panels (default: down-arrows on the domain strip only)')
@@ -1037,7 +1042,8 @@ def main():
     if args.index_only:
         args.index_map = True
     if args.strips and not args.index_only:
-        geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz, args.bnd_lines)
+        geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz, args.bnd_lines,
+                    args.domain_colours)
         _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")

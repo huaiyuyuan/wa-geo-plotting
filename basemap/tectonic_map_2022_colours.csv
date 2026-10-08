@@ -1,0 +1,76 @@
+# Domain colours matched to the GSWA "Simplified Tectonic Map of Western Australia",
+# 1:10 000 000, March 2022 (WA_TectonicsMap_10M_A4_Mar2022). Colours sampled from the
+# map at a point inside each unit (rendered 200 dpi, modal colour) and checked by eye.
+# The map colours units by rock type x age (its legend chart). Rows below the
+# "parents" marker are fallbacks used when a unit is not listed by its own name.
+# Units the map leaves uncoloured (offshore) or too small to sample are omitted.
+# (c) Geological Survey of Western Australia, CC-BY-4.0.
+name,colour
+Youanmi Terrane,#fbcbbb
+Eastern Goldfields Superterrane,#fbcbbb
+Yilgarn Craton,#fbcbbb
+South West Terrane,#f597a9
+Narryer Terrane,#f597a9
+"Yilgarn Craton, Marymia Inlier",#e5c3b0
+"Yilgarn Craton, Goodin Inlier",#dbaf6f
+Pilbara Craton,#fbcbbb
+Fortescue Basin,#ab8947
+Hamersley Basin,#86c4e9
+Perth Basin,#def1b9
+Southern Carnarvon Basin,#b8dbf2
+Canning Basin,#b8dbf2
+Eucla Basin,#fef4b8
+Officer Basin (Phase 2),#b8dbf2
+Officer Basin (Phase 1),#f0dcce
+Yandanooka Basin,#e5c3b0
+Moora Basin,#e5c3b0
+Badgeradda Basin,#f0dcce
+"Albany-Fraser Orogen, Northern Foreland",#fab7c1
+Biranup Zone,#da9fd3
+Nornalup Zone,#e7c0e2
+Fraser Zone,#cf568c
+Tropicana Zone,#d97ca3
+Arid Basin,#da9fd3
+Ragged Basin,#cf568c
+Barren Basin,#dbaf96
+Woodline Sub-basin,#dbaf96
+Gascoyne Province,#e6a5bf
+"Yarlarweelor Gneiss Complex, Narryer Terrane",#e6a5bf
+Ashburton Basin,#dbaf6f
+Bresnahan Basin,#dbaf96
+Edmund Basin,#e3c292
+Collier Basin,#e5c3b0
+Salvation Basin,#e5c3b0
+Scorpion Basin,#dbaf96
+Earaheedy Basin,#dbaf96
+Yerrida Basin,#dbaf6f
+Bryah Basin,#dbaf6f
+Yeneena Basin,#f0dcce
+Rudall Province,#e7c0e2
+Kimberley Basin,#dbaf6f
+Bastion Basin,#dbaf6f
+Louisa Basin,#f0dcce
+Wunaamin Miliwundi Orogen,#dbaf6f
+Lamboo Province,#da9fd3
+Osmond Basin,#dbaf6f
+Bonaparte Basin,#def1b9
+Wolfe Basin,#f0dcce
+Birrindudu Basin,#dbaf96
+Murraba Basin,#f0dcce
+Aileron Province,#da9fd3
+Amadeus Basin (Phase 1),#f0dcce
+Bentley Basin,#e3c292
+Musgrave Province,#e7c0e2
+# parents (fallbacks)
+West Australian Craton,#fbcbbb
+Capricorn Orogen,#e6a5bf
+Albany-Fraser Orogen,#da9fd3
+Kepa Kurl Booya Province,#e7c0e2
+Pinjarra Orogen,#e7c0e2
+Paterson Orogen,#f0dcce
+Halls Creek Orogen,#da9fd3
+North Australian Craton,#dbaf6f
+Phanerozoic basins,#b8dbf2
+Westralian Superbasin,#b8dbf2
+Centralian Superbasin,#f0dcce
+Neoproterozoic basins,#f0dcce

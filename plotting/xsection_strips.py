@@ -132,12 +132,15 @@ class PolygonIndex:
         self._paths: dict[int, Path] = {}
 
     @classmethod
-    def from_npz(cls, path, class_key="parents"):
+    def from_npz(cls, path, class_key="parents", colours="map2022"):
         """Load a litho/tectonic npz.
 
         class_key="parents" uses the stored grouping and its colours.
-        Any other per-ring key (e.g. "names" = TECTNAME, written by the updated
-        extract scripts) becomes the class, coloured from a qualitative palette.
+        Any other per-ring key (e.g. "names" = TECTNAME) becomes the class, coloured by
+        colours = "map2022"  : GSWA Simplified Tectonic Map 1:10M (2022) colours, by unit
+                               name, then parent; then TECTCOLOUR; then a pastel palette
+                  "tectcolour": TECTCOLOUR from the shapefile, then the palette
+                  "palette"  : pastel palette only
         Falls back to "parents" with a warning if the key is missing.
         """
         d = np.load(path, allow_pickle=True)
@@ -148,17 +151,26 @@ class PolygonIndex:
         if class_key == "parents":
             return cls(d["rings"], d["colors"], d["parents"])
         names = np.asarray(d[class_key]).astype(str)
-        cols = palette_for(names)
-        if "tect_colors" in d.files:                 # GSWA map colours (TECTCOLOUR)
+        cols = palette_for(names).astype(object)
+        src = np.array(["palette"] * len(names), dtype=object)
+        if colours in ("map2022", "tectcolour") and "tect_colors" in d.files:
             tc = np.asarray(d["tect_colors"]).astype(str)
             have = tc != ""
-            cols = np.where(have, tc, cols)
-            print(f"  ({os.path.basename(str(path))}: GSWA TECTCOLOUR for "
-                  f"{have.sum()} of {len(tc)} rings)")
-        else:
-            print(f"  ({os.path.basename(str(path))}: no GSWA colours - re-run "
-                  f"extract/make_tectonic_basemap.py for map-matched domain colours)")
-        return cls(d["rings"], cols, names)
+            cols[have], src[have] = tc[have], "TECTCOLOUR"
+        if colours == "map2022":
+            table = map2022_colours()
+            parents = np.asarray(d["parents"]).astype(str) if "parents" in d.files else names
+            for k, (n, par) in enumerate(zip(names, parents)):
+                for key, tag in ((n, "map2022"), (par, "map2022 (parent)")):
+                    c = table.get(key.strip().lower())
+                    if c:
+                        cols[k], src[k] = c, tag
+                        break
+        from collections import Counter
+        cnt = Counter(src)
+        print(f"  ({os.path.basename(str(path))}: domain colours " +
+              ", ".join(f"{v} {k}" for k, v in cnt.most_common()) + " rings)")
+        return cls(d["rings"], cols.astype(str), names)
 
     def _path(self, k):
         p = self._paths.get(k)
@@ -208,6 +220,29 @@ class PolygonIndex:
 _PALETTE = ("#c6dbef", "#fdd0a2", "#c7e9c0", "#dadaeb", "#fcbba1", "#d9d9d9",
             "#fee391", "#9ecae1", "#a1d99b", "#bcbddc", "#fdae6b", "#ccebc5",
             "#f2f0f7", "#ffffcc", "#b3cde3", "#decbe4")
+
+
+_MAP2022 = None
+
+
+def map2022_colours():
+    """{lower-case unit name: '#rrggbb'} from basemap/tectonic_map_2022_colours.csv."""
+    global _MAP2022
+    if _MAP2022 is None:
+        import csv
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, "..", "basemap", "tectonic_map_2022_colours.csv")
+        _MAP2022 = {}
+        if os.path.isfile(path):
+            with open(path) as f:
+                rows = csv.reader(l for l in f if not l.startswith("#"))
+                next(rows, None)
+                for r in rows:
+                    if len(r) == 2 and r[1].startswith("#"):
+                        _MAP2022[r[0].strip().lower()] = r[1].strip()
+        else:
+            print(f"  (no {path}: map2022 domain colours unavailable)")
+    return _MAP2022
 
 
 def palette_for(names):
