@@ -208,6 +208,8 @@ def main():
                     help='geology strips (default domain,boundaries,names; add litho for the '
                          'lithology strip)')
     ap.add_argument('--no-strips', action='store_true')
+    ap.add_argument('--bnd-lines', action='store_true',
+                    help='also draw boundaries as dashed lines through the panels')
     ap.add_argument('--litho-npz'); ap.add_argument('--tect-npz'); ap.add_argument('--bnd-npz')
     ap.add_argument('--nproc', type=int, default=1)
     ap.add_argument('--out-dir', default='figures/compare')
@@ -217,7 +219,8 @@ def main():
     print('Models:')
     A, B = (load_model(s, a.d_max) for s in a.models)
     if not a.no_strips and a.strips:
-        px._GEO = px._load_geology(a.strips, a.litho_npz, a.tect_npz, a.bnd_npz)
+        px._GEO = px._load_geology(a.strips, a.litho_npz, a.tect_npz, a.bnd_npz,
+                                   lines=a.bnd_lines)
     px.plot_section._moho_interp = None
     if a.moho:
         from scipy.interpolate import RectBivariateSpline

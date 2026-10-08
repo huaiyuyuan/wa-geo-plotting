@@ -65,14 +65,14 @@ def _resolve_npz(cfg_name, fname, override=None):
     return None
 
 
-def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None):
+def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False):
     import xsection_strips as xs
     want = {w.strip() for w in spec.split(',') if w.strip()}
     bad = want - _STRIP_ITEMS
     if bad:
         raise SystemExit(f"--strips: unknown item(s) {sorted(bad)}; "
                          f"choose from {sorted(_STRIP_ITEMS)}")
-    g = dict(litho=None, tect=None, bnd=None, names='names' in want)
+    g = dict(litho=None, tect=None, bnd=None, names='names' in want, lines=lines)
     jobs = (('litho', 'litho', 'LITHOLOGY_NPZ', 'wa_lithology.npz', litho_npz,
              xs.PolygonIndex.from_npz),
             ('domain', 'tect', 'TECTONICS_NPZ', 'wa_tectonics.npz', tect_npz,
@@ -96,8 +96,10 @@ def _strip_height_in(g):
     if g is None:
         return 0.0
     h = 0.17 * ((g['litho'] is not None) + (g['tect'] is not None))
-    if g['names'] and g['bnd'] is not None:
-        h += 0.55
+    if g['bnd'] is not None:
+        h += 0.28                                  # boundary down-arrows
+        if g['names']:
+            h += 0.55
     return h
 
 
@@ -107,7 +109,8 @@ def _add_geology(top_ax, axes, plon, plat, dist):
     import xsection_strips as xs
     res = xs.add_profile_strips(top_ax, axes, plon, plat, dist,
                                 litho=_GEO['litho'], tectonic=_GEO['tect'],
-                                boundaries=_GEO['bnd'], label_boundaries=_GEO['names'])
+                                boundaries=_GEO['bnd'], label_boundaries=_GEO['names'],
+                                boundary_lines=_GEO.get('lines', False))
     if res.crossings:
         print('  boundary crossings: ' + ', '.join(
             f"{c.dist:.0f} km" + (f" ({'/'.join(c.names)})" if c.names else '')
@@ -1000,6 +1003,9 @@ def main():
     ap.add_argument('--no-strips', action='store_true', help='plain sections, no geology strips')
     ap.add_argument('--index-only', action='store_true',
                     help='with --index-map: draw only the map, do not re-plot any sections')
+    ap.add_argument('--bnd-lines', action='store_true',
+                    help='also draw boundary crossings as dashed lines through the model '
+                         'panels (default: down-arrows on the domain strip only)')
     ap.add_argument('--litho-npz', default=None, help='override lithology npz')
     ap.add_argument('--index-tick', type=float, default=100,
                     help='--index-map distance tick/label spacing in km (default 100)')
@@ -1031,7 +1037,7 @@ def main():
     if args.index_only:
         args.index_map = True
     if args.strips and not args.index_only:
-        geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz)
+        geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz, args.bnd_lines)
         _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")

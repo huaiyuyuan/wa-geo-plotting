@@ -98,6 +98,8 @@ def main():
     ap.add_argument('--color-field', default='PARENTNAME')
     ap.add_argument('--name-field', default='TECTNAME',
                     help='per-ring unit name saved as "names" (terrane strip on sections)')
+    ap.add_argument('--colour-field', default='TECTCOLOUR',
+                    help='GSWA map colour per unit, saved as "tect_colors" (domain strip colours)')
     args=ap.parse_args()
 
     dbf = args.shp.replace('.shp','.dbf')
@@ -108,7 +110,9 @@ def main():
         print("  WARNING: polygon/record count mismatch - names may be misaligned")
 
     # npz: flat rings + colors
-    ring_coords=[]; ring_color=[]; ring_parent=[]; ring_name=[]
+    ring_coords=[]; ring_color=[]; ring_parent=[]; ring_name=[]; ring_tc=[]
+    from make_litho import parse_colour          # same parser as the 500k lithology colours
+    fmt_count={}; examples={}
     # geojson: FeatureCollection
     features=[]
     for rings, rec in zip(shapes, recs):
@@ -122,6 +126,10 @@ def main():
                 ring_coords.append(np.asarray(r,dtype=np.float32))
                 ring_color.append(col); ring_parent.append(key)
                 ring_name.append(rec.get(args.name_field,''))
+                raw=rec.get(args.colour_field,''); tc,fmt=parse_colour(raw); ring_tc.append(tc)
+                fmt_count[fmt]=fmt_count.get(fmt,0)+1
+                if len(examples.setdefault(fmt,[]))<4 and raw not in examples[fmt]:
+                    examples[fmt].append(raw)
                 poly_rings.append([[float(x),float(y)] for x,y in r])
         if poly_rings:
             features.append({"type":"Feature",
@@ -132,20 +140,23 @@ def main():
                 "geometry":{"type":"Polygon","coordinates":poly_rings}})
 
     if args.out_npz:
-        os.makedirs(os.path.dirname(args.out_npz), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(args.out_npz)), exist_ok=True)
         miss = sorted({p for p in ring_parent if p not in PARENT_COLORS})
         if miss:
             print(f"  groups with no colour (default grey): {miss}")
         np.savez_compressed(args.out_npz,
             rings=_objarr(ring_coords),
             colors=np.array(ring_color), parents=np.array(ring_parent),
-            names=np.array(ring_name),
+            names=np.array(ring_name), tect_colors=np.array(ring_tc),
             parent_color_keys=np.array(list(PARENT_COLORS.keys())),
             parent_color_vals=np.array(list(PARENT_COLORS.values())))
         print(f"npz: {args.out_npz} ({len(ring_coords)} rings)")
+        print(f"  {args.colour_field} formats (rings): {fmt_count}")
+        for fmt,ex in examples.items():
+            print(f"    {fmt:8s} e.g. {ex}")
 
     if args.out_json:
-        os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
         fc={"type":"FeatureCollection",
             "crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:OGC:1.3:CRS84"}},
             "metadata":{"source":"GSWA GEOLOGY 10M Tectonics GDA2020",

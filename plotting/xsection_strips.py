@@ -24,6 +24,8 @@ GSWA data (c) Geological Survey of Western Australia, CC-BY-4.0.
 """
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -146,7 +148,17 @@ class PolygonIndex:
         if class_key == "parents":
             return cls(d["rings"], d["colors"], d["parents"])
         names = np.asarray(d[class_key]).astype(str)
-        return cls(d["rings"], palette_for(names), names)
+        cols = palette_for(names)
+        if "tect_colors" in d.files:                 # GSWA map colours (TECTCOLOUR)
+            tc = np.asarray(d["tect_colors"]).astype(str)
+            have = tc != ""
+            cols = np.where(have, tc, cols)
+            print(f"  ({os.path.basename(str(path))}: GSWA TECTCOLOUR for "
+                  f"{have.sum()} of {len(tc)} rings)")
+        else:
+            print(f"  ({os.path.basename(str(path))}: no GSWA colours - re-run "
+                  f"extract/make_tectonic_basemap.py for map-matched domain colours)")
+        return cls(d["rings"], cols, names)
 
     def _path(self, k):
         p = self._paths.get(k)
@@ -237,14 +249,17 @@ def runs_from_samples(dist, idx, index: PolygonIndex, none_color="#ffffff00"):
 class Crossing:
     dist: float
     names: list = field(default_factory=list)
+    scale: str = ""          # 'lithospheric' wins when merged crossings differ
 
 
 class BoundarySet:
     """Crustal-boundary polylines with a profile-intersection test."""
 
-    def __init__(self, lines, names=None):
+    def __init__(self, lines, names=None, scale=None):
         self.lines = [np.asarray(l, float)[:, :2] for l in lines]
         self.names = (np.asarray(names).astype(str) if names is not None
+                      else np.array([""] * len(self.lines)))
+        self.scale = (np.char.lower(np.asarray(scale).astype(str)) if scale is not None
                       else np.array([""] * len(self.lines)))
         b = np.array([[l[:, 0].min(), l[:, 0].max(), l[:, 1].min(), l[:, 1].max()]
                       for l in self.lines])
@@ -257,7 +272,7 @@ class BoundarySet:
         if names is None:
             print(f"  ({path}: no 'names' array; re-run extract/make_boundaries.py "
                   f"to label crossings)")
-        return cls(d["lines"], names)
+        return cls(d["lines"], names, d["scale"] if "scale" in d.files else None)
 
     def crossings(self, lon, lat, dist, dedupe_km=3.0, pad_deg=0.2):
         """Where boundary polylines cross the profile.
@@ -288,15 +303,17 @@ class BoundarySet:
             ok = (np.abs(denom) > 1e-12) & (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)
             for i, j in zip(*np.nonzero(ok)):
                 found.append((dist[i] + t[i, j] * (dist[i + 1] - dist[i]),
-                              self.names[k]))
+                              self.names[k], self.scale[k]))
         found.sort()
         merged: list[Crossing] = []
-        for d, name in found:
+        for d, name, sc in found:
             if merged and d - merged[-1].dist < dedupe_km:
                 if name and name not in merged[-1].names:
                     merged[-1].names.append(name)
+                if sc == "lithospheric":
+                    merged[-1].scale = sc
                 continue
-            merged.append(Crossing(d, [name] if name else []))
+            merged.append(Crossing(d, [name] if name else [], sc))
         return merged
 
 
@@ -387,32 +404,44 @@ def _label_groups(crossings, km_per_in, min_sep_in=0.35):
     return groups
 
 
+ARROW = {"lithospheric": dict(lw=1.6, head=9, length=17),
+         "crustal": dict(lw=0.9, head=6, length=12)}
+
+
 def draw_boundaries(axes, crossings, strip_axes=(), color="k", lw=0.8,
                     ls=(0, (4, 3)), alpha=0.75, marker_size=5, label_names=False,
-                    name_fontsize=6, span_km=None, min_sep_in=0.35):
-    """Dashed lines through every panel, solid ticks through the strips,
-    and a small triangle on top of the uppermost strip."""
-    for ax in axes:
-        for c in crossings:
-            ax.axvline(c.dist, color=color, lw=lw, ls=ls, alpha=alpha, zorder=6)
+                    name_fontsize=6, span_km=None, min_sep_in=0.35, panel_lines=False):
+    """Each major crustal boundary = a black down-arrow standing on the top strip
+    (lithospheric-scale thick, crustal-scale thinner) and a thin tick through the
+    strips. panel_lines=True also draws dashed lines through the model panels."""
+    if panel_lines:
+        for ax in axes:
+            for c in crossings:
+                ax.axvline(c.dist, color=color, lw=lw, ls=ls, alpha=alpha, zorder=6)
     for sax in strip_axes:
         for c in crossings:
-            sax.axvline(c.dist, color=color, lw=lw * 1.2, zorder=6)
-    if strip_axes and marker_size:
-        top = strip_axes[-1]
-        tr = blended_transform_factory(top.transData, top.transAxes)
-        for c in crossings:
-            top.plot(c.dist, 1.0, marker="v", ms=marker_size, color=color,
-                     transform=tr, clip_on=False, zorder=7)
-        if label_names:
-            w_in = top.get_position().width * top.figure.get_figwidth()
-            if span_km is None:
-                span_km = abs(np.diff(top.get_xlim())[0])
-            for d0, names in _label_groups(crossings, span_km / w_in, min_sep_in):
-                top.annotate(" / ".join(names), (d0, 1.0), xycoords=tr,
-                             xytext=(1, marker_size + 1), textcoords="offset points",
-                             rotation=35, ha="left", va="bottom",
-                             fontsize=name_fontsize, annotation_clip=False)
+            sax.axvline(c.dist, color=color, lw=0.6, zorder=6)
+    if not strip_axes:
+        return
+    top = strip_axes[-1]
+    tr = blended_transform_factory(top.transData, top.transAxes)
+    tallest = 0
+    for c in crossings:
+        st = ARROW["crustal" if c.scale == "crustal" else "lithospheric"]
+        top.annotate("", xy=(c.dist, 1.0), xycoords=tr, xytext=(0, st["length"]),
+                     textcoords="offset points", annotation_clip=False, zorder=7,
+                     arrowprops=dict(arrowstyle="-|>", color=color, lw=st["lw"],
+                                     mutation_scale=st["head"], shrinkA=0, shrinkB=0))
+        tallest = max(tallest, st["length"])
+    if label_names:
+        w_in = top.get_position().width * top.figure.get_figwidth()
+        if span_km is None:
+            span_km = abs(np.diff(top.get_xlim())[0])
+        for d0, names in _label_groups(crossings, span_km / w_in, min_sep_in):
+            top.annotate(" / ".join(names), (d0, 1.0), xycoords=tr,
+                         xytext=(1, tallest + 2), textcoords="offset points",
+                         rotation=35, ha="left", va="bottom",
+                         fontsize=name_fontsize, annotation_clip=False)
 
 
 def legend_handles(all_runs, min_km=0.0, max_items=None):
@@ -439,7 +468,8 @@ class StripResult:
 def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
                        tectonic=None, boundaries=None, step_km=0.5,
                        height_in=0.14, gap_in=0.03, labels=True,
-                       label_domains=True, label_boundaries=False, dedupe_km=3.0):
+                       label_domains=True, label_boundaries=False, dedupe_km=3.0,
+                       boundary_lines=False):
     """One-call entry point for plot_xsection.
 
     top_ax      the uppermost Vs panel of the section (strips go above it)
@@ -465,10 +495,11 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
     if boundaries is not None:
         crossings = boundaries.crossings(lon_f, lat_f, d_f, dedupe_km=dedupe_km)
         draw_boundaries(panel_axes, crossings, strip_axes=strips,
-                        label_names=label_boundaries, span_km=dist[-1] - dist[0])
+                        label_names=label_boundaries, span_km=dist[-1] - dist[0],
+                        panel_lines=boundary_lines)
     # Keep the panel title(s) above the strips (and boundary names) rather than under them.
     if strips:
         _move_titles(top_ax, strips[-1],
-                     pad=26.0 if (label_boundaries and crossings) else 2.0)
+                     pad=(48.0 if label_boundaries else 22.0) if crossings else 2.0)
     top_ax.set_xlim(dist[0], dist[-1])
     return StripResult(strips, runs, crossings)
