@@ -741,8 +741,16 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         # graticule as on the GSWA map: 5 deg, thin grey, labels '115°' / '20°' bottom + left
         import matplotlib.ticker as mticker
         gcol = '#858c8c'
-        gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=np.arange(100, 151, 5),
-                          ylocs=np.arange(-45, 1, 5), color=gcol, linewidth=0.35, zorder=5.2)
+        glon, glat = np.arange(100, 151, 5), np.arange(-45, 1, 5)
+        # lines drawn as our own polylines above the sea and land masks (cartopy's
+        # gridliner draws at its own zorder, under the ocean); gridliner only for labels
+        lat_d, lon_d = np.linspace(-50, 5, 221), np.linspace(95, 155, 241)
+        for lo in glon:
+            ax.plot(np.full_like(lat_d, lo), lat_d, color=gcol, lw=0.35, zorder=5.2, transform=tr)
+        for la in glat:
+            ax.plot(lon_d, np.full_like(lon_d, la), color=gcol, lw=0.35, zorder=5.2, transform=tr)
+        gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=glon, ylocs=glat,
+                          color='none', linewidth=0)
         gl.top_labels = gl.right_labels = False
         gl.x_inline = gl.y_inline = False
         gl.rotate_labels = False
@@ -757,15 +765,11 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                  + (f'; {n_sta} stations)' if n_sta else ')'),
                  fontsize=11)
     if _tect and style == 'map2022':
-        from wa_basemap import MAP2022_CREDIT, boundaries_legend
-        ax.text(0.01, 0.99, MAP2022_CREDIT, transform=ax.transAxes, ha='left', va='top',
-                fontsize=7, zorder=12, bbox=dict(fc='w', ec='0.6', alpha=0.9, pad=3))
+        from wa_basemap import boundaries_legend   # credit now in the map-legend title
         boundaries_legend(ax, loc='lower left', fontsize=7, lw_litho=1.1, lw_crust=0.5)
         if legend and legend != 'none':
             from wa_basemap import add_map2022_legend
-            # under the credit box when both sit top-left
-            add_map2022_legend(ax, loc=legend,
-                               anchor=(0.01, 0.945) if legend == 'upper left' else None)
+            add_map2022_legend(ax, loc=legend)
     elif _tect and style == 'gswa':
         ax.text(0.01, 0.99, 'Geology: GSWA 1:500k tectonic units, GSWA colours\n'
                 '(\u00a9 Geological Survey of Western Australia, CC-BY-4.0)',

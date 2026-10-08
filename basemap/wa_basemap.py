@@ -314,7 +314,7 @@ def _narrow_font():
 
 
 def add_map2022_legend(ax, loc='upper left', width_in=3.2, anchor=None, fontsize=7,
-                       title='Tectonic units: rock type and age (GSWA 2022)', zorder=22):
+                       title='Tectonic units: rock type and age (GSWA 2022, CC BY 4.0)', zorder=22):
     """The legend chart of the GSWA 2022 simplified tectonic map (rock type x age), redrawn
     as vectors from tectonic_map_2022_legend.json (extract/make_map2022_assets.py), on a
     white panel width_in wide. loc = corner; anchor = (x, y) axes fraction of that corner.
