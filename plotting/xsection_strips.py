@@ -138,7 +138,8 @@ class PolygonIndex:
         class_key="parents" uses the stored grouping and its colours.
         Any other per-ring key (e.g. "names" = TECTNAME) becomes the class, coloured by
         colours = "map2022"  : GSWA Simplified Tectonic Map 1:10M (2022) colours, by unit
-                               name, then parent; then TECTCOLOUR; then a pastel palette
+                               name, then parent; then TECTCOLOUR; then the parent-domain
+                               colour (as on the index map)
                   "tectcolour": TECTCOLOUR from the shapefile, then the palette
                   "palette"  : pastel palette only
         Falls back to "parents" with a warning if the key is missing.
@@ -153,6 +154,8 @@ class PolygonIndex:
         names = np.asarray(d[class_key]).astype(str)
         cols = palette_for(names).astype(object)
         src = np.array(["palette"] * len(names), dtype=object)
+        if colours == "map2022" and "colors" in d.files:     # last resort as on the index map:
+            cols, src[:] = d["colors"].astype(object), "domain"   # the parent-domain colour
         if colours in ("map2022", "tectcolour") and "tect_colors" in d.files:
             tc = np.asarray(d["tect_colors"]).astype(str)
             have = tc != ""

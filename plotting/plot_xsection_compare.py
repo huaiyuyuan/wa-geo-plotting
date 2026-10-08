@@ -204,7 +204,7 @@ def main():
     ap.add_argument('--clim-diff', type=float, default=4.0)
     ap.add_argument('--ncolors', type=int, default=16)
     ap.add_argument('--strips', nargs='?', const=px._STRIPS_DEFAULT,
-                    default='domain,boundaries,names',
+                    default=px._STRIPS_DEFAULT,
                     help='geology strips (default domain,boundaries,names; add litho for the '
                          'lithology strip)')
     ap.add_argument('--no-strips', action='store_true')

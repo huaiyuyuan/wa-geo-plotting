@@ -19,8 +19,8 @@ Usage:
 
   # Surface-geology strips above the top panel + crustal-boundary lines:
   python3 plot_xsection.py --fvs Fvs.iter.2.Z.npz --load-sections sections.txt \
-      --strips                                  # = litho,boundaries
-  python3 plot_xsection.py ... --strips litho,domain,boundaries,names
+      # default strips: domain,boundaries,names (2022 tectonic-map colours + boundary arrows)
+  python3 plot_xsection.py ... --strips litho,domain,boundaries,names   # + 500k lithology
       litho       GSWA 500k lithology strip (velocity-oriented colours)
       domain      terrane strip (10M TECTNAME, labelled in the strip)
       boundaries  dashed lines where Major Crustal Boundaries cross the section
@@ -47,7 +47,7 @@ for _p in (_REPO, _REPO / 'basemap', _REPO / 'plotting'):
 # ── Section geology strips (lithology / terranes / crustal boundaries) ───────
 _GEO = None          # loaded once in main(); workers reload only if not inherited
 _STRIP_ITEMS = {'litho', 'domain', 'boundaries', 'names'}
-_STRIPS_DEFAULT = 'litho,domain,boundaries,names'   # geology strips are on unless --no-strips
+_STRIPS_DEFAULT = 'domain,boundaries,names'   # same domain colours as the index map; add litho if wanted
 
 
 def _resolve_npz(cfg_name, fname, override=None):
@@ -1056,7 +1056,8 @@ def main():
                     help='Parallelise section plotting across N cores (default 1)')
     ap.add_argument('--strips', nargs='?', const=_STRIPS_DEFAULT, default=_STRIPS_DEFAULT,
                     help='Surface-geology strips above the top panel: comma list of '
-                         'litho,domain,boundaries,names (default: all four)')
+                         'litho,domain,boundaries,names (default: domain,boundaries,names - '
+                         'the index-map colours plus crustal-boundary arrows)')
     ap.add_argument('--no-strips', action='store_true', help='plain sections, no geology strips')
     ap.add_argument('--index-only', action='store_true',
                     help='with --index-map: draw only the map, do not re-plot any sections')
