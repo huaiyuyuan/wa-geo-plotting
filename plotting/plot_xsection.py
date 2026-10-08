@@ -230,6 +230,7 @@ def _sample_2d(Lon, Lat, data2d, prof_lon, prof_lat):
 # Colour convention (locked): absolute velocity = Spectral (warm = slow);
 # xi diverging around 1.0 and all differences = RdBu (red = low/slow).
 CMAP_ABS = 'Spectral'
+CMAP_VPVS = 'viridis'     # Vp/Vs absolute: continuous, as on the depth maps
 
 # ── Section scale (shared by per-section and --stack; plot_stack's math) ─────
 PAGE_W_IN = 9.5     # longest section spans this many inches
@@ -291,6 +292,30 @@ def _xi_ref_label(mode):
     return 'whole-model mean' if mode == 'global' else 'model mean at each depth'
 
 
+# ── Fvs loading (optionally converting Viso -> true Vsv) ──────────────────────
+def _load_fvs(path, vel='model'):
+    """Fvs npz as a dict. vel='vsv_true' replaces the 'Vsv' array of an xi (ZT) model
+    (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi^2)/3), xi = Vsh/Vsv.
+    Vsv_err stays the Viso posterior error (a close proxy)."""
+    raw = np.load(path, allow_pickle=True)
+    d = {k: raw[k] for k in raw.files}
+    if vel == 'vsv_true':
+        if 'Xi' not in d or np.nanstd(d['Xi']) <= 1e-4:
+            sys.exit(f"--vel vsv_true needs an xi (ZT) model; in {os.path.basename(path)} "
+                     f"the 'Vsv' array already is Vsv")
+        d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
+        d['_vel'] = 'vsv_true'
+    return d
+
+
+def _vname(d, is_zt):
+    return 'Vsv' if d.get('_vel') == 'vsv_true' else ('Viso' if is_zt else 'Vsv')
+
+
+def _varies(d, key):
+    return key in d and np.nanstd(d[key]) > 1e-4
+
+
 # ── Moho overlay: dashed line + optional grey mask below it ───────────────────
 def _draw_moho(ax, dist, moho, zbot, mask_alpha=0.5, lw=1.1):
     """Dashed Moho; with mask_alpha (0-1) a grey veil from the Moho down to zbot
@@ -330,6 +355,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     Vsv    = d['Vsv'][:, zm]
     Vsv_err= d['Vsv_err'][:, zm] if 'Vsv_err' in d else None
     Xi     = d['Xi'][:, zm] if 'Xi' in d else None
+    Vpvs   = d['Vpvs'][:, zm] if _varies(d, 'Vpvs') else None   # only if actually inverted
     moho_prof = None
     _mi = getattr(plot_section, '_moho_interp', None)
 
@@ -343,6 +369,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     vsv_p = _sample_profile(Lon, Lat, Vsv, plon, plat)
     err_p = _sample_profile(Lon, Lat, Vsv_err, plon, plat) if Vsv_err is not None else None
     xi_p  = _sample_profile(Lon, Lat, Xi, plon, plat) if Xi is not None else None
+    vpvs_p = _sample_profile(Lon, Lat, Vpvs, plon, plat) if Vpvs is not None else None
 
     if ref_mean is None:
         ref_mean = np.array([np.nanmean(Vsv[:, k]) for k in range(Vsv.shape[1])])
@@ -357,7 +384,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     have_xi  = xi_p  is not None and np.nanstd(xi_p) > 1e-4
     have_err = err_p is not None
     is_zt = 'ZT' in os.path.basename(getattr(plot_section, '_fvsname', '')) or have_xi
-    vname = 'Viso' if is_zt else 'Vsv'
+    vname = _vname(d, is_zt)
 
     dxi_p = None
     if have_xi and xi_panel in ('dxi', 'both'):
@@ -366,6 +393,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     rows = ['abs', 'rel']
     if have_xi and xi_panel in ('xi', 'both'): rows.append('xi')
     if dxi_p is not None: rows.append('dxi')
+    if vpvs_p is not None: rows.append('vpvs')
     if have_err: rows.append('err')
     nrow = len(rows)
 
@@ -426,6 +454,11 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     if dxi_p is not None:
         _pcolor(axes[r], dxi_p, _cmap('RdBu', ncolors), -clim_xi, clim_xi,
                 'dlnXi (%)', title=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'); r += 1
+    if vpvs_p is not None:
+        fv = vpvs_p[np.isfinite(vpvs_p)]
+        mv, sv = np.nanmedian(fv), np.nanstd(fv)
+        _pcolor(axes[r], vpvs_p, _cmap(CMAP_VPVS, ncolors), mv - sigma_vsv * sv,
+                mv + sigma_vsv * sv, 'Vp/Vs', title='Vp/Vs'); r += 1
     if have_err:
         vmax_e = np.nanpercentile(err_p[np.isfinite(err_p)], 90)
         _pcolor(axes[r], err_p, _cmap('YlOrRd', ncolors), 0, vmax_e,
@@ -684,7 +717,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
                ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
-               xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None):
+               xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None, clim_vpvs=3.0):
     global DIV_GAP, DIV_WHITE
     if div_gap is not None:
         DIV_GAP = div_gap
@@ -700,13 +733,19 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     else: zm = np.ones(len(z), bool)
     zbot = z[-1]
 
-    FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','dxi':'Xi','err':'Vsv_err'}
+    FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','dxi':'Xi','err':'Vsv_err',
+            'vpvs':'Vpvs','dvpvs':'Vpvs'}
     arrname = FKEY.get(field,'Vsv')
     if arrname not in d:
         print(f"  field {field}: {arrname} not in Fvs"); return
+    if field in ('xi', 'dxi', 'vpvs', 'dvpvs') and not _varies(d, arrname):
+        print(f"  field {field}: {arrname} is fixed at {np.nanmean(d[arrname]):.4f} in this "
+              f"model - nothing to plot (use a model that inverts it)"); return
     ARR = d[arrname][:, zm]
     if ref_mean is None and field=='dvsv':
         ref_mean = np.array([np.nanmean(d['Vsv'][:,zm][:,k]) for k in range(ARR.shape[1])])
+    if field=='dvpvs':
+        vref = np.nanmean(ARR, axis=0)          # whole-model mean Vp/Vs at each depth
     if field=='dxi':
         xref = _xi_ref(ARR, xi_ref)
         print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
@@ -721,8 +760,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             _mi=RectBivariateSpline(mla,mlo,md[:,2].reshape(len(mla),len(mlo)),kx=1,ky=1)
         except Exception: pass
 
-    is_zt = 'ZT' in os.path.basename(getattr(plot_section,'_fvsname',''))
-    vname = 'Viso' if (is_zt or arrname=='Xi') else 'Vsv'
+    is_zt = 'ZT' in os.path.basename(getattr(plot_section,'_fvsname','')) or _varies(d, 'Xi')
+    vname = _vname(d, is_zt)
 
     prof=[]
     for (la1,lo1,la2,lo2,lab) in sections:
@@ -732,6 +771,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             samp=(samp-ref_mean[None,:])/ref_mean[None,:]*100
         elif field=='dxi':
             samp=(samp/xref[None,:]-1.0)*100
+        elif field=='dvpvs':
+            samp=(samp/vref[None,:]-1.0)*100
         mp=None
         if _mi is not None:
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
@@ -752,6 +793,10 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         cmap=_cmap('RdBu',ncolors); clab='xi'; ext='both'
     elif field=='dxi':
         cmap=_cmap('RdBu',ncolors); clab=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'; ext='both'
+    elif field=='vpvs':
+        cmap=_cmap(CMAP_VPVS,ncolors); clab='Vp/Vs'; ext='both'
+    elif field=='dvpvs':
+        cmap=_cmap('RdBu',ncolors); clab='dln(Vp/Vs) (%) vs model mean at each depth'; ext='both'
     else:
         cmap=_cmap('YlOrRd',ncolors); clab=f'{vname} IQR/2'; ext='max'
 
@@ -761,7 +806,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     fig_h=n*row_h_in + (n-1)*gap_in + 1.2 + strip_h
     fig_w=page_w_in + 1.8                       # + per-panel colorbar room
     fig=plt.figure(figsize=(fig_w,fig_h))
-    fname = {'dxi': 'dlnXi'}.get(field, field.upper())
+    fname = {'dxi': 'dlnXi', 'vpvs': 'Vp/Vs', 'dvpvs': 'dln(Vp/Vs)'}.get(field, field.upper())
     fig.suptitle(f'{fname} ({vname}) — {n} sections [depth 0-{zbot:.0f} km, '
                  f'longest {maxd:.0f} km, VE {ve:.0f}x]',
                  fontsize=11, fontweight='bold')
@@ -777,7 +822,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         # colour limits: explicit --vmin/--vmax win; else per-field defaults
         if vmin is not None and vmax is not None:
             vmn,vmx=vmin,vmax
-        elif field=='vsv':
+        elif field in ('vsv', 'vpvs'):
             fv=p['data'][np.isfinite(p['data'])]
             med,std=np.nanmedian(fv),np.nanstd(fv); vmn,vmx=med-sigma_vsv*std,med+sigma_vsv*std
         elif field=='err':
@@ -788,6 +833,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             vmn,vmx=0.90,1.10
         elif field=='dxi':
             vmn,vmx=-clim_xi,clim_xi
+        elif field=='dvpvs':
+            vmn,vmx=-clim_vpvs,clim_vpvs
         else:
             vmn,vmx=vmin,vmax
         im=ax.pcolormesh(D,Z,p['data'],cmap=cmap,vmin=vmn,vmax=vmx,shading='auto')
@@ -848,6 +895,11 @@ def main():
     ap.add_argument('--xi-ref', default='depth', choices=['depth', 'global'],
                     help='dlnXi reference: whole-model mean at each depth (default) or '
                          'one whole-model mean over all depths')
+    ap.add_argument('--vel', default='model', choices=['model', 'vsv_true'],
+                    help="velocity in the Vs panels/stacks: model = the Fvs 'Vsv' array (Viso "
+                         "for xi/ZT models); vsv_true = Viso/sqrt((2+Xi^2)/3) for xi models")
+    ap.add_argument('--clim-vpvs', type=float, default=3.0,
+                    help='dln(Vp/Vs) colour limit +/- %% (default 3)')
     ap.add_argument('--clim-xi', type=float, default=5.0,
                     help='dlnXi colour limit, +/- %% (default 5)')
     ap.add_argument('--div-gap', type=float, default=0.07,
@@ -863,7 +915,7 @@ def main():
     ap.add_argument('--load-sections', default=None,
                     help='Load section list from a file (skip ginput)')
     ap.add_argument('--stack', default=None,
-                    choices=['vsv','dvsv','xi','dxi','err'],
+                    choices=['vsv','dvsv','xi','dxi','vpvs','dvpvs','err'],
                     help='Stack ONE field for all sections on a single A4 page '
                          '(rows=sections, same height, width proportional to length).')
     ap.add_argument('--vmin', type=float, default=None,
@@ -923,7 +975,7 @@ def main():
         _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")
-    d = np.load(args.fvs, allow_pickle=True)
+    d = _load_fvs(args.fvs, args.vel)
     plot_section._fvsname = args.fvs   # for Viso/Vsv label detection
     # Optional Moho interpolator
     plot_section._moho_interp = None
@@ -1010,7 +1062,7 @@ def main():
                    ncolors=args.ncolors,
                    moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
                    xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap,
-                   div_white=args.div_white)
+                   div_white=args.div_white, clim_vpvs=args.clim_vpvs)
         return
 
     # Longest section sets the scale (drawn 2:1 at landscape width); all sections
@@ -1044,7 +1096,7 @@ def main():
         from functools import partial
         print(f"Plotting {len(sections)} sections on {args.nproc} cores ...")
         worker = partial(_section_worker, fvs=args.fvs, moho=args.moho, kw=kw,
-                         geo_args=geo_args)
+                         geo_args=geo_args, vel=args.vel)
         with Pool(args.nproc) as pool:
             pool.map(worker, sections)
     else:
@@ -1052,13 +1104,13 @@ def main():
             plot_section(d, *sec, **kw)
 
 
-def _section_worker(sec, fvs, moho, kw, geo_args=None):
+def _section_worker(sec, fvs, moho, kw, geo_args=None, vel='model'):
     """Standalone worker for parallel section plotting (reloads Fvs per process)."""
     import numpy as np
     global _GEO
     if geo_args and _GEO is None:     # not inherited (spawn/forkserver start method)
         _GEO = _load_geology(*geo_args)
-    d = np.load(fvs, allow_pickle=True)
+    d = _load_fvs(fvs, vel)
     plot_section._fvsname = fvs
     plot_section._moho_interp = None
     if moho:
