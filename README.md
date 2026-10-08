@@ -47,6 +47,28 @@ GSWA shapefiles (tectonic units, 500k geology, crustal boundaries) are
 **CC-BY-4.0 © Geological Survey of Western Australia** — attribute GSWA in any
 figure or redistribution. The derived npz/geojson carry this in their metadata.
 
+### References
+- Geological Survey of Western Australia 2022, 1:10 000 000 simplified tectonic map of
+  Western Australia, March 2022: Geological Survey of Western Australia, Non-series map,
+  <https://geodocsget.dmirs.wa.gov.au/api/GeoDocsGet?filekey=b03c3f5a-84d5-4f26-8628-fb839d4bb609-s5axiawwyhlfngq2e2p61uc8x9wumauj1eg4q45f>.
+  *Domain colours (`basemap/tectonic_map_2022_colours.csv`: strips, `--index-style map2022`).*
+- Geological Survey of Western Australia 2020, 1:500 000 tectonic units of Western Australia,
+  March 2020 update: Geological Survey of Western Australia, digital data layer,
+  <www.dmirs.wa.gov.au/geoview>. *(500k units; cite the release you downloaded.)*
+- GSWA Major Crustal Boundaries (2025) and 1:10 000 000 tectonic units digital data layers,
+  as downloaded (DEMIRS Data and Software Centre) — boundary arrows/lines and 10M unit polygons.
+
+Suggested caption credit: *"Domain colours after GSWA (2022); tectonic units and crustal
+boundaries © State of Western Australia (DEMIRS), CC BY 4.0."*
+
+## Profile location (index) map
+```
+python3 plotting/plot_xsection.py --fvs $FVS --load-sections $XS --index-map --index-only \
+    [--footprint] --out-dir $OUT/figures/iterN
+```
+Default `--index-style map2022`: 10M units filled with the 2022 simplified-tectonic-map
+colours, major crustal boundaries, stations, sections with distance ticks.
+
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.
 make_Fvs.py / read_posterior.py stay in noise_asdf; this repo takes the Fvs npz

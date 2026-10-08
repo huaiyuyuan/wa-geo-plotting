@@ -4,7 +4,10 @@
 # The map colours units by rock type x age (its legend chart). Rows below the
 # "parents" marker are fallbacks used when a unit is not listed by its own name.
 # Units the map leaves uncoloured (offshore) or too small to sample are omitted.
-# (c) Geological Survey of Western Australia, CC-BY-4.0.
+# Source: Geological Survey of Western Australia 2022, 1:10 000 000 simplified tectonic
+#   map of Western Australia, March 2022: Geological Survey of Western Australia,
+#   Non-series map, <https://geodocsget.dmirs.wa.gov.au/api/GeoDocsGet?filekey=b03c3f5a-84d5-4f26-8628-fb839d4bb609-s5axiawwyhlfngq2e2p61uc8x9wumauj1eg4q45f>.
+# (c) State of Western Australia (Geological Survey of Western Australia), CC BY 4.0.
 name,colour
 Youanmi Terrane,#fbcbbb
 Eastern Goldfields Superterrane,#fbcbbb

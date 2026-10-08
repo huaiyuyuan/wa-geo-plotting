@@ -627,11 +627,12 @@ def _load_stations(path, cols=(2, 1)):
 
 
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
-                    litho_npz=None, tick_km=100, stations=None, style='gswa',
-                    footprint=None, footprint_veil=0.5):
+                    litho_npz=None, tick_km=100, stations=None, style='map2022',
+                    footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None):
     """Section lines on the WA tectonic map, with distance ticks + labels every
-    tick_km. If litho_npz is given, the GSWA 500k granite + mafic/greenstone/
-    granite-greenstone polygons are drawn inside the Yilgarn and Pilbara cratons."""
+    tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
+    colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
+    domains + Yilgarn/Pilbara granite-greenstone from litho_npz; plain = domains."""
     import matplotlib.pyplot as plt
     Lon = d['Lon']; Lat = d['Lat']
     try:
@@ -656,15 +657,25 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
             print("  (index map: lithology npz has no GSWA colours - re-run "
                   "extract/make_litho.py; using --index-style craton)")
             style = 'craton'
-        add_tectonic_background(ax, alpha=0.5, zorder=0, transform=tr, clip_box=cb)
         litho_drawn = None
+        if style == 'map2022':
+            from wa_basemap import add_map2022_units, add_crustal_boundaries
+            add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=0)
+            try:
+                add_crustal_boundaries(ax, bnd_npz, transform=tr, clip_box=cb, zorder=4.2,
+                                       lw_litho=1.1, lw_crust=0.5, alpha=0.85)
+            except Exception as e:
+                print(f"  (crustal boundaries unavailable: {e})")
+        else:
+            add_tectonic_background(ax, alpha=0.5, zorder=0, transform=tr, clip_box=cb)
         if style == 'gswa':
             add_gswa_units(ax, litho_npz, transform=tr, clip_box=cb, zorder=1)
         elif style == 'craton' and litho_npz:
             litho_drawn = add_craton_geology(ax, litho_npz, zorder=1, transform=tr,
                                              clip_box=cb)
-        add_tectonic_outlines(ax, lw=0.4, alpha=0.6, zorder=3, major_only=True,
-                              transform=tr, clip_box=cb)
+        if style != 'map2022':
+            add_tectonic_outlines(ax, lw=0.4, alpha=0.6, zorder=3, major_only=True,
+                                  transform=tr, clip_box=cb)
         _tect = True
     except Exception as e:
         print(f"(tectonic bg unavailable: {e})")
@@ -681,7 +692,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         n_sta = len(slon)
         ax.scatter(slon, slat, marker='^', s=16, c='k', edgecolors='w',
                    linewidths=0.35, zorder=5.5, **lkw)
-    if _GEO is not None and _GEO['bnd'] is not None:
+    if style != 'map2022' and _GEO is not None and _GEO['bnd'] is not None:
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(_GEO['bnd'].lines, colors='firebrick',
                                          linewidths=0.9, alpha=0.8, zorder=4, **lkw))
@@ -714,7 +725,12 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
     ax.set_title(f'Cross-section locations ({len(sections)} lines, ticks every {tick_km:g} km'
                  + (f'; {n_sta} stations)' if n_sta else ')'),
                  fontsize=11)
-    if _tect and style == 'gswa':
+    if _tect and style == 'map2022':
+        from wa_basemap import MAP2022_CREDIT, boundaries_legend
+        ax.text(0.01, 0.99, MAP2022_CREDIT, transform=ax.transAxes, ha='left', va='top',
+                fontsize=7, zorder=12, bbox=dict(fc='w', ec='0.6', alpha=0.9, pad=3))
+        boundaries_legend(ax, loc='lower left', fontsize=7, lw_litho=1.1, lw_crust=0.5)
+    elif _tect and style == 'gswa':
         ax.text(0.01, 0.99, 'Geology: GSWA 1:500k tectonic units, GSWA colours\n'
                 '(\u00a9 Geological Survey of Western Australia, CC-BY-4.0)',
                 transform=ax.transAxes, ha='left', va='top', fontsize=7, zorder=12,
@@ -1024,8 +1040,11 @@ def main():
     ap.add_argument('--footprint-outline', default=None, help='override config.FOOTPRINT_OUTLINE')
     ap.add_argument('--footprint-veil', type=float, default=0.5,
                     help='veil opacity outside the footprint on the index map (0 = outline only)')
-    ap.add_argument('--index-style', default='gswa', choices=['gswa', 'craton', 'plain'],
-                    help='--index-map colours: gswa = GSWA 500k unit colours (default); '
+    ap.add_argument('--index-style', default='map2022',
+                    choices=['map2022', 'gswa', 'craton', 'plain'],
+                    help='--index-map colours: map2022 = 10M units in the GSWA 2022 simplified '
+                         'tectonic map colours + major crustal boundaries (default); '
+                         'gswa = GSWA 500k unit colours; '
                          'craton = tectonic domains + Yilgarn/Pilbara granite-greenstone; '
                          'plain = tectonic domains only')
     ap.add_argument('--index-plain', action='store_true',
@@ -1125,6 +1144,9 @@ def main():
         _plot_index_map(d, sections, args.out_dir, tick_km=args.index_tick, stations=sta,
                         style='plain' if args.index_plain else args.index_style,
                         footprint=_index_footprint(args), footprint_veil=args.footprint_veil,
+                        tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
+                        bnd_npz=_resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
+                                             args.bnd_npz),
                         litho_npz=None if args.index_plain else
                         _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
         if args.index_only:

@@ -203,6 +203,93 @@ def add_gswa_units(ax, litho_npz, transform=None, clip_box=None, zorder=1,
     return pc
 
 
+MAP2022_CREDIT = ('Domain colours after GSWA (2022) 1:10 000 000 Simplified tectonic map of WA;\n'
+                  'units © State of Western Australia (GSWA), CC BY 4.0')
+
+_MAP2022 = None
+
+
+def map2022_table():
+    """{lower-case unit name: '#rrggbb'} from tectonic_map_2022_colours.csv (next to this file)."""
+    global _MAP2022
+    if _MAP2022 is None:
+        import csv
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'tectonic_map_2022_colours.csv')
+        _MAP2022 = {}
+        if os.path.isfile(path):
+            with open(path) as f:
+                rows = csv.reader(l for l in f if not l.startswith('#'))
+                next(rows, None)
+                for r in rows:
+                    if len(r) == 2 and r[1].strip().startswith('#'):
+                        _MAP2022[r[0].strip().lower()] = r[1].strip()
+    return _MAP2022
+
+
+def _signed_area(r):
+    return 0.5 * (np.dot(r[:, 0], np.roll(r[:, 1], -1)) - np.dot(r[:, 1], np.roll(r[:, 0], -1)))
+
+
+def _compound(rings):
+    """One Path from the rings of one unit, filled correctly under matplotlib's
+    nonzero rule: rings nested an odd number of times in the others are holes
+    (wound clockwise), the rest outer rings (anticlockwise)."""
+    from matplotlib.path import Path
+    paths = [Path(r) for r in rings]
+    verts, codes = [], []
+    for i, r in enumerate(rings):
+        depth = sum(paths[j].contains_point(r[0]) for j in range(len(rings)) if j != i)
+        ccw = _signed_area(r) > 0
+        if ccw == bool(depth % 2):          # hole must be CW, outer CCW
+            r = r[::-1]
+        verts += list(r) + [r[0]]
+        codes += [Path.MOVETO] + [Path.LINETO] * (len(r) - 1) + [Path.CLOSEPOLY]
+    return Path(np.array(verts), codes)
+
+
+def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
+                      edgecolor='0.3', lw=0.2, alpha=1.0, verbose=True):
+    """GSWA 10M tectonic units filled like the 2022 Simplified Tectonic Map of WA:
+    colour by unit name (TECTNAME), then its parent, from tectonic_map_2022_colours.csv;
+    then the shapefile TECTCOLOUR; then the parent-domain colour. Rings of one unit
+    form one compound path (holes are holes); units are drawn big-first so inliers
+    sit on top. Returns {source: n_units} for the colour sources used."""
+    from matplotlib.collections import PathCollection
+    d = np.load(npz, allow_pickle=True) if npz else _load()
+    rings = d['rings']
+    names = d['names'].astype(str) if 'names' in d.files else d['parents'].astype(str)
+    parents = d['parents'].astype(str)
+    tcol = d['tect_colors'].astype(str) if 'tect_colors' in d.files else [''] * len(rings)
+    key = d['rec_idx'] if 'rec_idx' in d.files else names     # one record / unit
+    table = map2022_table()
+    groups = {}
+    for i, r in enumerate(rings):
+        r = np.asarray(r, float)[:, :2]
+        if len(r) < 3 or not _in_box(r, clip_box):
+            continue
+        groups.setdefault(key[i], []).append(i)
+    items, src = [], {}
+    for idx in groups.values():
+        i0 = idx[0]
+        c, s = (table.get(names[i0].strip().lower()), 'map2022')
+        if not c:
+            c, s = table.get(parents[i0].strip().lower()), 'map2022 (parent)'
+        if not c:
+            c, s = (tcol[i0], 'TECTCOLOUR') if tcol[i0] else (str(d['colors'][i0]), 'domain')
+        src[s] = src.get(s, 0) + 1
+        rr = [np.asarray(rings[i], float)[:, :2] for i in idx]
+        items.append((max(abs(_signed_area(r)) for r in rr), _compound(rr), c))
+    items.sort(key=lambda t: -t[0])
+    kw = {'transform': transform} if transform is not None else {}
+    ax.add_collection(PathCollection([p for _, p, _ in items], facecolors=[c for *_, c in items],
+                                     edgecolors=edgecolor, linewidths=lw, alpha=alpha,
+                                     zorder=zorder, **kw))
+    if verbose:
+        print('  map2022 unit colours: ' + ', '.join(f'{v} {k}' for k, v in src.items()))
+    return src
+
+
 def _boundaries_npz(path=None):
     cands = [path, os.environ.get('WA_BOUNDARIES_NPZ', '')]
     try:
