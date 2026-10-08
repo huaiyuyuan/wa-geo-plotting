@@ -629,7 +629,7 @@ def _load_stations(path, cols=(2, 1)):
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                     litho_npz=None, tick_km=100, stations=None, style='map2022',
                     footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
-                    projection='albers'):
+                    projection='albers', legend='upper left'):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -729,10 +729,17 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         _add_states_ocean(ax)
         ax.set_extent([Lon.min()-0.5, Lon.max()+0.5,
                        Lat.min()-0.5, Lat.max()+0.5], crs=tr)
+        # graticule as on the GSWA map: 5 deg, thin grey, labels '115°' / '20°' bottom + left
+        import matplotlib.ticker as mticker
+        gcol = '#858c8c'
         gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=np.arange(100, 151, 5),
-                          ylocs=np.arange(-45, 1, 5), color='0.55', linewidth=0.4, zorder=4.1)
+                          ylocs=np.arange(-45, 1, 5), color=gcol, linewidth=0.35, zorder=4.1)
         gl.top_labels = gl.right_labels = False
-        gl.xlabel_style = gl.ylabel_style = {'size': 8}
+        gl.x_inline = gl.y_inline = False
+        gl.rotate_labels = False
+        gl.xformatter = mticker.FuncFormatter(lambda v, pos=None: f'{v:g}\u00b0')
+        gl.yformatter = mticker.FuncFormatter(lambda v, pos=None: f'{abs(v):g}\u00b0')
+        gl.xlabel_style = gl.ylabel_style = {'size': 8, 'color': gcol}
     else:
         ax.set_xlim(Lon.min()-0.5, Lon.max()+0.5)
         ax.set_ylim(Lat.min()-0.5, Lat.max()+0.5); ax.set_aspect('equal')
@@ -745,6 +752,11 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         ax.text(0.01, 0.99, MAP2022_CREDIT, transform=ax.transAxes, ha='left', va='top',
                 fontsize=7, zorder=12, bbox=dict(fc='w', ec='0.6', alpha=0.9, pad=3))
         boundaries_legend(ax, loc='lower left', fontsize=7, lw_litho=1.1, lw_crust=0.5)
+        if legend and legend != 'none':
+            from wa_basemap import add_map2022_legend
+            # under the credit box when both sit top-left
+            add_map2022_legend(ax, loc=legend,
+                               anchor=(0.01, 0.945) if legend == 'upper left' else None)
     elif _tect and style == 'gswa':
         ax.text(0.01, 0.99, 'Geology: GSWA 1:500k tectonic units, GSWA colours\n'
                 '(\u00a9 Geological Survey of Western Australia, CC-BY-4.0)',
@@ -1065,6 +1077,10 @@ def main():
     ap.add_argument('--index-proj', default='albers', choices=['albers', 'plate'],
                     help='--index-map projection: albers = as the GSWA 2022 simplified tectonic '
                          'map (Albers, 121E, 17.5S/31.5S; default); plate = plain lon/lat')
+    ap.add_argument('--index-legend', default='upper left',
+                    choices=['upper left', 'upper right', 'lower left', 'lower right', 'none'],
+                    help='--index-map (map2022 style): corner for the GSWA 2022 map legend '
+                         '(rock type x age chart); none = omit')
     ap.add_argument('--index-plain', action='store_true',
                     help='--index-map: tectonic colours only (no craton granite/greenstone)')
     ap.add_argument('--tect-npz',  default=None, help='override tectonics npz')
@@ -1165,7 +1181,7 @@ def main():
                         tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
                         bnd_npz=_resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
                                              args.bnd_npz),
-                        projection=args.index_proj,
+                        projection=args.index_proj, legend=args.index_legend,
                         litho_npz=None if args.index_plain else
                         _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
         if args.index_only:

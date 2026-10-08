@@ -297,6 +297,33 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
     return src
 
 
+def add_map2022_legend(ax, loc='upper left', width_in=3.0, anchor=None, fontsize=7,
+                       title='Tectonic units: rock type and age (GSWA 2022)', zorder=22):
+    """Inset the legend chart of the GSWA 2022 simplified tectonic map (rock type x age,
+    cut from the PDF at 400 dpi: tectonic_map_2022_legend.png, CC BY 4.0) on a white
+    panel. anchor = (x, y) in axes fractions for the `loc` corner (default: that corner).
+    Returns the AnchoredOffsetbox, or None if the image is missing."""
+    from matplotlib.offsetbox import AnchoredOffsetbox, OffsetImage, TextArea, VPacker
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tectonic_map_2022_legend.png')
+    if not os.path.isfile(path):
+        print(f"  (no {path}: map legend not drawn)")
+        return None
+    img = plt.imread(path)
+    child = OffsetImage(img, zoom=width_in * 72.0 / img.shape[1])   # size in points
+    parts = [child] if not title else [TextArea(title, textprops=dict(size=fontsize,
+                                                                    weight='bold')), child]
+    box = VPacker(children=parts, align='left', pad=0, sep=3)
+    if anchor is None:
+        anchor = {'upper left': (0.01, 0.99), 'upper right': (0.99, 0.99),
+                  'lower left': (0.01, 0.01), 'lower right': (0.99, 0.01)}[loc]
+    ab = AnchoredOffsetbox(loc=loc, child=box, pad=0.35, borderpad=0, frameon=True,
+                           bbox_to_anchor=anchor, bbox_transform=ax.transAxes)
+    ab.patch.set(facecolor='white', edgecolor='0.6', linewidth=0.6, alpha=0.95)
+    ab.set_zorder(zorder)
+    ax.add_artist(ab)
+    return ab
+
+
 def _boundaries_npz(path=None):
     cands = [path, os.environ.get('WA_BOUNDARIES_NPZ', '')]
     try:

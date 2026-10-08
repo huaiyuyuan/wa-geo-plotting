@@ -70,6 +70,9 @@ Default `--index-style map2022`: 10M units filled with the 2022 simplified-tecto
 colours, major crustal boundaries, stations, sections with distance ticks, drawn in the
 map's own projection (`--index-proj albers`: Albers equal-area, central meridian 121°E,
 standard parallels 17.5°S/31.5°S, fitted to the PDF graticule; `plate` = plain lon/lat).
+The map's own legend (rock type x age chart, `basemap/tectonic_map_2022_legend.png`, cut
+from the PDF) is inset top-left (`--index-legend` corner or `none`); 5° graticule in the
+map's grey, labelled bottom/left as on the PDF.
 
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.
