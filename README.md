@@ -67,7 +67,9 @@ python3 plotting/plot_xsection.py --fvs $FVS --load-sections $XS --index-map --i
     [--footprint] --out-dir $OUT/figures/iterN
 ```
 Default `--index-style map2022`: 10M units filled with the 2022 simplified-tectonic-map
-colours, major crustal boundaries, stations, sections with distance ticks.
+colours, major crustal boundaries, stations, sections with distance ticks, drawn in the
+map's own projection (`--index-proj albers`: Albers equal-area, central meridian 121°E,
+standard parallels 17.5°S/31.5°S, fitted to the PDF graticule; `plate` = plain lon/lat).
 
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.

@@ -270,6 +270,10 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
             continue
         groups.setdefault(key[i], []).append(i)
     items, src = [], {}
+    proj = getattr(ax, 'projection', None)
+    pre = proj is not None and hasattr(transform, 'transform_points')
+    if pre:   # project vertices ourselves: keeps the hole winding, avoids cartopy's path re-noding
+        P = lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]
     for idx in groups.values():
         i0 = idx[0]
         c, s = (table.get(names[i0].strip().lower()), 'map2022')
@@ -279,9 +283,12 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
             c, s = (tcol[i0], 'TECTCOLOUR') if tcol[i0] else (str(d['colors'][i0]), 'domain')
         src[s] = src.get(s, 0) + 1
         rr = [np.asarray(rings[i], float)[:, :2] for i in idx]
-        items.append((max(abs(_signed_area(r)) for r in rr), _compound(rr), c))
+        area = max(abs(_signed_area(r)) for r in rr)
+        if pre:
+            rr = [P(r) for r in rr]
+        items.append((area, _compound(rr), c))
     items.sort(key=lambda t: -t[0])
-    kw = {'transform': transform} if transform is not None else {}
+    kw = {'transform': ax.transData if pre else transform} if transform is not None else {}
     ax.add_collection(PathCollection([p for _, p, _ in items], facecolors=[c for *_, c in items],
                                      edgecolors=edgecolor, linewidths=lw, alpha=alpha,
                                      zorder=zorder, **kw))

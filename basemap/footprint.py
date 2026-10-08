@@ -131,7 +131,7 @@ class Footprint:
         area = 0.5 * np.sum(ring[:-1, 0] * ring[1:, 1] - ring[1:, 0] * ring[:-1, 1])
         if area > 0:                          # hole must run opposite to the box
             ring = ring[::-1]
-        box = np.array([[60, -80], [180, -80], [180, 20], [60, 20], [60, -80]], float)
+        box = np.array([[95, -50], [150, -50], [150, 0], [95, 0], [95, -50]], float)  # WA + margin (projection-safe)
         verts = np.vstack([box, ring])
         codes = ([Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY] +
                  [Path.MOVETO] + [Path.LINETO] * (len(ring) - 2) + [Path.CLOSEPOLY])

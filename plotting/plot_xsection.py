@@ -628,7 +628,8 @@ def _load_stations(path, cols=(2, 1)):
 
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                     litho_npz=None, tick_km=100, stations=None, style='map2022',
-                    footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None):
+                    footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
+                    projection='albers'):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -636,10 +637,19 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
     import matplotlib.pyplot as plt
     Lon = d['Lon']; Lat = d['Lat']
     try:
-        from plot_depth_slice import _make_ax, _add_states_ocean, _HAS_CARTOPY
+        from plot_depth_slice import _add_states_ocean, _HAS_CARTOPY
         import cartopy.crs as ccrs
+        if not _HAS_CARTOPY:
+            raise ImportError('cartopy')
         fig = plt.figure(figsize=(13, 13))
-        ax = _make_ax(fig, [0.06, 0.05, 0.88, 0.90])
+        # albers = the projection of the GSWA 1:10M simplified tectonic map (2022):
+        # Albers equal-area, central meridian 121E, standard parallels 17.5S / 31.5S
+        # (fitted to the PDF graticule, 0.1 pt rms) - meridians converge, 129E tilts.
+        proj = (ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
+                if projection == 'albers' else ccrs.PlateCarree())
+        ax = fig.add_axes([0.06, 0.05, 0.88, 0.90], projection=proj)
+        ax.set_facecolor('lightgrey')
+        ax.coastlines('50m', linewidth=0.8, color='k', zorder=10)
         tr = ccrs.PlateCarree()
         _geo = True
     except Exception:
@@ -683,6 +693,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                    **({'transform': tr} if tr else {})); _tect = False
 
     lkw = {'transform': tr} if tr else {}
+    xyc = tr._as_mpl_transform(ax) if tr else 'data'     # annotate in lon/lat on any projection
     if footprint is not None:          # outline + veil, no zoom (sections may extend past it)
         footprint.focus(ax, tr, veil_alpha=footprint_veil, zoom=False,
                         veil_zorder=4.4)     # over the geology, under stations + sections
@@ -705,11 +716,11 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         for dkm in np.arange(0, dist[-1], tick_km):
             j = np.argmin(np.abs(dist - dkm))
             ax.plot(plon[j], plat[j], '|', color='k', ms=7, mew=1.2, zorder=7, **lkw)
-            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=5.5,
+            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=5.5, xycoords=xyc,
                         ha='center', va='bottom', zorder=8,
                         xytext=(0, 3), textcoords='offset points',
                         bbox=dict(fc='w', ec='none', alpha=0.6, pad=0.3))
-        ax.annotate(lab, (lon1, lat1), fontsize=9, fontweight='bold',
+        ax.annotate(lab, (lon1, lat1), fontsize=9, fontweight='bold', xycoords=xyc,
                     color='darkred', zorder=8, xytext=(5,5),
                     textcoords='offset points')
 
@@ -718,6 +729,10 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         _add_states_ocean(ax)
         ax.set_extent([Lon.min()-0.5, Lon.max()+0.5,
                        Lat.min()-0.5, Lat.max()+0.5], crs=tr)
+        gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=np.arange(100, 151, 5),
+                          ylocs=np.arange(-45, 1, 5), color='0.55', linewidth=0.4, zorder=4.1)
+        gl.top_labels = gl.right_labels = False
+        gl.xlabel_style = gl.ylabel_style = {'size': 8}
     else:
         ax.set_xlim(Lon.min()-0.5, Lon.max()+0.5)
         ax.set_ylim(Lat.min()-0.5, Lat.max()+0.5); ax.set_aspect('equal')
@@ -1047,6 +1062,9 @@ def main():
                          'gswa = GSWA 500k unit colours; '
                          'craton = tectonic domains + Yilgarn/Pilbara granite-greenstone; '
                          'plain = tectonic domains only')
+    ap.add_argument('--index-proj', default='albers', choices=['albers', 'plate'],
+                    help='--index-map projection: albers = as the GSWA 2022 simplified tectonic '
+                         'map (Albers, 121E, 17.5S/31.5S; default); plate = plain lon/lat')
     ap.add_argument('--index-plain', action='store_true',
                     help='--index-map: tectonic colours only (no craton granite/greenstone)')
     ap.add_argument('--tect-npz',  default=None, help='override tectonics npz')
@@ -1147,6 +1165,7 @@ def main():
                         tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
                         bnd_npz=_resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz',
                                              args.bnd_npz),
+                        projection=args.index_proj,
                         litho_npz=None if args.index_plain else
                         _resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz))
         if args.index_only:
