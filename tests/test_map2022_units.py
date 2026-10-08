@@ -60,8 +60,9 @@ def test_legend_and_labels_smoke():
     n1 = wb.add_map2022_labels(ax, level=1)
     n2 = wb.add_map2022_labels(ax, level=2)
     assert 20 <= n1 < n2
-    names = [t.get_text().replace("\u2009", "") for t in ax.texts]
-    assert "YILGARN CRATON" in names and any("CAPRICORN" in n for n in names)
+    names = [t.get_text() for t in ax.texts]
+    assert "YILGARN CRATON" in names and "C A P R I C O R N   O R O G E N" in names
+    assert not any(ord(c) > 0x2000 and c != "\u2013" for n in names for c in n)
     fig.savefig(Path(tempfile.mkdtemp()) / "leg.png", dpi=60)
     plt.close(fig)
 

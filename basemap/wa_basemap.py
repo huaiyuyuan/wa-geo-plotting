@@ -411,8 +411,10 @@ def add_map2022_labels(ax, transform=None, level=1, scale=1.4, clip_box=None, zo
         col, wt, spaced = _LABEL_STYLE.get(r['class'], ('k', 'normal', False))
         text = r['text'].replace('\\n', '\n')
         if spaced:
-            text = '\n'.join('\u2009'.join(w) for w in text.split('\n')).replace(
-                '\u2009 \u2009', '\u2002')
+            # letter-spaced with plain spaces (every font has them; thin/en spaces are
+            # missing from e.g. Liberation Sans Narrow): 1 between letters, 3 between words
+            text = '\n'.join('   '.join(' '.join(w) for w in line.split(' '))
+                             for line in text.split('\n'))
         ax.text(lon, lat, text, color=col, fontsize=float(r['size_pt']) * scale, family=fam,
                 weight='bold' if int(r['bold']) else wt, rotation=float(r['angle']),
                 rotation_mode='anchor', ha='center', va='center', multialignment='center',

@@ -5,4 +5,3 @@ data/*.geojson
 # Figures
 *.png
 *.pdf
-!basemap/tectonic_map_2022_legend.png

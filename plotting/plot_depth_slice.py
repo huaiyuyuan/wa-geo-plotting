@@ -110,10 +110,10 @@ def _make_ax(fig, rect):
         ax.set_aspect('equal')
     return ax
 
-def _add_states_ocean(ax):
-    """Add grey ocean + non-WA states overlay (for scatter panels)."""
+def _add_states_ocean(ax, ocean='lightgrey', states='lightgrey'):
+    """Add ocean + non-WA states overlay (for scatter panels); grey by default."""
     if not _HAS_CARTOPY: return
-    ax.add_feature(cfeature.OCEAN, facecolor='lightgrey', zorder=5)
+    ax.add_feature(cfeature.OCEAN, facecolor=ocean, zorder=5)
     try:
         import cartopy.io.shapereader as shpreader
         shp = shpreader.natural_earth('50m', 'cultural', 'admin_1_states_provinces')
@@ -121,7 +121,7 @@ def _add_states_ocean(ax):
             if (rec.attributes.get('admin','') == 'Australia' and
                     rec.attributes.get('name','') != 'Western Australia'):
                 ax.add_geometries([rec.geometry], ccrs.PlateCarree(),
-                                  facecolor='lightgrey', edgecolor='0.5',
+                                  facecolor=states, edgecolor='0.5',
                                   linewidth=0.4, zorder=5)
     except Exception: pass
     ax.coastlines('50m', linewidth=0.8, color='k', zorder=10)

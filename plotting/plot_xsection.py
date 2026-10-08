@@ -649,7 +649,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         proj = (ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
                 if projection == 'albers' else ccrs.PlateCarree())
         ax = fig.add_axes([0.06, 0.05, 0.88, 0.90], projection=proj)
-        ax.set_facecolor('lightgrey')
+        ax.set_facecolor('white' if style == 'map2022' else 'lightgrey')
         ax.coastlines('50m', linewidth=0.8, color='k', zorder=10)
         tr = ccrs.PlateCarree()
         _geo = True
@@ -732,14 +732,17 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
 
     # Grey ocean mask + coastline on top (like the depth-slice panels)
     if _geo:
-        _add_states_ocean(ax)
+        if style == 'map2022':      # as on the GSWA map: white sea, other states pale grey
+            _add_states_ocean(ax, ocean='white', states='#e8e8e8')
+        else:
+            _add_states_ocean(ax)
         ax.set_extent([Lon.min()-0.5, Lon.max()+0.5,
                        Lat.min()-0.5, Lat.max()+0.5], crs=tr)
         # graticule as on the GSWA map: 5 deg, thin grey, labels '115°' / '20°' bottom + left
         import matplotlib.ticker as mticker
         gcol = '#858c8c'
         gl = ax.gridlines(crs=tr, draw_labels=True, xlocs=np.arange(100, 151, 5),
-                          ylocs=np.arange(-45, 1, 5), color=gcol, linewidth=0.35, zorder=4.1)
+                          ylocs=np.arange(-45, 1, 5), color=gcol, linewidth=0.35, zorder=5.2)
         gl.top_labels = gl.right_labels = False
         gl.x_inline = gl.y_inline = False
         gl.rotate_labels = False
