@@ -170,10 +170,13 @@ class PolygonIndex:
                         cols[k], src[k] = c, tag
                         break
         from collections import Counter
+        keep = np.array([c != "none" for c in cols])       # 'none': concealed, not on the map
+        src[~keep] = "hidden"
         cnt = Counter(src)
         print(f"  ({os.path.basename(str(path))}: domain colours " +
               ", ".join(f"{v} {k}" for k, v in cnt.most_common()) + " rings)")
-        return cls(d["rings"], cols.astype(str), names)
+        rings = [r for r, k in zip(d["rings"], keep) if k]
+        return cls(rings, cols[keep].astype(str), names[keep])
 
     def _path(self, k):
         p = self._paths.get(k)
@@ -241,7 +244,7 @@ def map2022_colours():
                 rows = csv.reader(l for l in f if not l.startswith("#"))
                 next(rows, None)
                 for r in rows:
-                    if len(r) == 2 and r[1].startswith("#"):
+                    if len(r) == 2 and (r[1].startswith("#") or r[1].strip() == "none"):
                         _MAP2022[r[0].strip().lower()] = r[1].strip()
         else:
             print(f"  (no {path}: map2022 domain colours unavailable)")

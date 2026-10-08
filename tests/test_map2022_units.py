@@ -52,6 +52,25 @@ def test_colours_holes_inliers():
     plt.close(fig)
 
 
+def test_concealed_units_hidden():
+    """Madura Province (basement under the Eucla Basin) is 'none' in the table: the Eucla
+    cover shows on the map and in the strip, as on the 2022 map."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plotting"))
+    import xsection_strips as xs
+    td = Path(tempfile.mkdtemp())
+    np.savez(td / "t.npz", rings=objarr([box(0, 10, 0, 10), box(2, 8, 2, 8)]),
+             names=np.array(["Eucla Basin", "Madura Province"]),
+             parents=np.array(["Phanerozoic basins", "STATE"]),
+             colors=np.array(["#aaaaaa"] * 2), tect_colors=np.array(["", "#c3a9d3"]))
+    fig, ax = plt.subplots(figsize=(2, 2), dpi=100)
+    src = wb.add_map2022_units(ax, td / "t.npz", lw=0, verbose=False)
+    ax.set_xlim(-1, 11); ax.set_ylim(-1, 11)
+    assert src.get("hidden") == 1 and pixel(fig, ax, 5, 5) == "#fef4b8"
+    plt.close(fig)
+    idx = xs.PolygonIndex.from_npz(td / "t.npz", class_key="names")
+    assert list(idx.parents[idx.sample(np.array([5.0]), np.array([5.0]))]) == ["Eucla Basin"]
+
+
 def test_legend_and_labels_smoke():
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.set_xlim(112, 130); ax.set_ylim(-36, -13)
@@ -68,7 +87,9 @@ def test_legend_and_labels_smoke():
 
 
 if __name__ == "__main__":
+    test_concealed_units_hidden()
+    print("ok  test_concealed_units_hidden")
     test_legend_and_labels_smoke()
     print("ok  test_legend_and_labels_smoke")
     test_colours_holes_inliers()
-    print("ok  test_colours_holes_inliers\n2 passed")
+    print("ok  test_colours_holes_inliers\n3 passed")

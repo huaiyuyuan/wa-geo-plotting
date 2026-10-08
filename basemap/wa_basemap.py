@@ -222,8 +222,8 @@ def map2022_table():
                 rows = csv.reader(l for l in f if not l.startswith('#'))
                 next(rows, None)
                 for r in rows:
-                    if len(r) == 2 and r[1].strip().startswith('#'):
-                        _MAP2022[r[0].strip().lower()] = r[1].strip()
+                    if len(r) == 2 and (r[1].strip().startswith('#') or r[1].strip() == 'none'):
+                        _MAP2022[r[0].strip().lower()] = r[1].strip()   # 'none' = hidden
     return _MAP2022
 
 
@@ -281,6 +281,9 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
             c, s = table.get(parents[i0].strip().lower()), 'map2022 (parent)'
         if not c:
             c, s = (tcol[i0], 'TECTCOLOUR') if tcol[i0] else (str(d['colors'][i0]), 'domain')
+        if c == 'none':                     # concealed on the 2022 map (e.g. under Eucla Basin)
+            src['hidden'] = src.get('hidden', 0) + 1
+            continue
         src[s] = src.get(s, 0) + 1
         rr = [np.asarray(rings[i], float)[:, :2] for i in idx]
         area = max(abs(_signed_area(r)) for r in rr)

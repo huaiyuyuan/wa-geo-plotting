@@ -65,6 +65,12 @@ Aileron Province,#da9fd3
 Amadeus Basin (Phase 1),#f0dcce
 Bentley Basin,#e3c292
 Musgrave Province,#e7c0e2
+# concealed basement the 2022 map does not show (it shows the Eucla Basin cover):
+# 'none' = not drawn on maps and left out of the cross-section strips
+Madura Province,none
+Western Coompana Province,none
+Recherche Supersuite,none
+Coompana Province,none
 # parents (fallbacks)
 West Australian Craton,#fbcbbb
 Capricorn Orogen,#e6a5bf
