@@ -36,7 +36,8 @@ def main():
     ap.add_argument('--depths', nargs='+', type=float, default=[10, 20, 30, 45])
     ap.add_argument('--modes', nargs='+', default=['abs', 'rel'], choices=['abs', 'rel'])
     ap.add_argument('--no-footprint', action='store_true', help='full WA view, no focus')
-    ap.add_argument('--overlay', default='outlines', choices=['outlines', 'filled', 'none'])
+    ap.add_argument('--overlay', default='boundaries',
+                    choices=['boundaries', 'outlines', 'both', 'filled', 'none'])
     ap.add_argument('--div-gap', type=float, default=0.07,
                     help='diverging maps skip +/- this band around white (0 = classic)')
     ap.add_argument('--div-white', type=int, default=2,

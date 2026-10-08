@@ -203,6 +203,69 @@ def add_gswa_units(ax, litho_npz, transform=None, clip_box=None, zorder=1,
     return pc
 
 
+def _boundaries_npz(path=None):
+    cands = [path, os.environ.get('WA_BOUNDARIES_NPZ', '')]
+    try:
+        import config
+        cands.append(getattr(config, 'BOUNDARIES_NPZ', None))
+    except Exception:
+        pass
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands.append(os.path.join(here, '..', 'data', 'wa_crustal_boundaries.npz'))
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    raise FileNotFoundError("wa_crustal_boundaries.npz not found (config.BOUNDARIES_NPZ, "
+                            "$WA_BOUNDARIES_NPZ or data/); run extract/make_boundaries.py")
+
+
+LOW_CONF = ('low', 'very low', 'none')
+
+
+def add_crustal_boundaries(ax, npz=None, transform=None, clip_box=None, color='k',
+                           lw_litho=1.3, lw_crust=0.7, zorder=6.5, alpha=0.9):
+    """GSWA Major Crustal Boundaries: lithospheric-scale lines thick, crustal-scale thin,
+    low / very low / no confidence dashed. Older npz without attributes -> one style.
+    Returns the npz path used."""
+    from matplotlib.collections import LineCollection
+    path = _boundaries_npz(npz)
+    d = np.load(path, allow_pickle=True)
+    n = len(d['lines'])
+    scale = d['scale'] if 'scale' in d.files else np.array(['lithospheric'] * n)
+    conf = d['conf'] if 'conf' in d.files else np.array(['high'] * n)
+    kw = {'transform': transform} if transform is not None else {}
+    groups = {}
+    for ln, sc, cf in zip(d['lines'], scale, conf):
+        ln = np.asarray(ln, float)
+        if len(ln) < 2:
+            continue
+        if clip_box is not None:
+            lo0, lo1, la0, la1 = clip_box
+            if (ln[:, 0].max() < lo0 or ln[:, 0].min() > lo1 or
+                    ln[:, 1].max() < la0 or ln[:, 1].min() > la1):
+                continue
+        key = (str(sc).lower() == 'crustal', str(cf).lower() in LOW_CONF)
+        groups.setdefault(key, []).append(ln)
+    for (crustal, low), segs in groups.items():
+        ax.add_collection(LineCollection(
+            segs, colors=color, linewidths=lw_crust if crustal else lw_litho,
+            linestyles=(0, (4, 2.5)) if low else 'solid', alpha=alpha, zorder=zorder, **kw))
+    return path
+
+
+def boundaries_legend(ax, loc='lower left', fontsize=7, color='k', lw_litho=1.3, lw_crust=0.7):
+    """Key for add_crustal_boundaries line styles."""
+    from matplotlib.lines import Line2D
+    h = [Line2D([], [], color=color, lw=lw_litho, label='lithospheric boundary'),
+         Line2D([], [], color=color, lw=lw_crust, label='crustal boundary'),
+         Line2D([], [], color=color, lw=lw_crust, ls=(0, (4, 2.5)), label='low confidence')]
+    leg = ax.legend(handles=h, loc=loc, fontsize=fontsize, framealpha=0.9,
+                    title='Major crustal boundaries (GSWA)', title_fontsize=fontsize,
+                    handlelength=2.2, borderpad=0.4, labelspacing=0.3)
+    leg.set_zorder(21)
+    return leg
+
+
 def tectonic_legend(ax, loc='lower left', fontsize=7, ncol=1, clip_box=None,
                     exclude=('STATE',), litho=None):
     """Legend of the major tectonic domains.

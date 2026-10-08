@@ -22,7 +22,8 @@ for _p in (os.path.join(_HERE, '..', 'basemap'), os.path.join(_HERE, '..')):
 from plot_depth_slice import (_make_ax, _add_states_ocean, _mask_wa_points,
                               _plot_smooth, _plot_scatter, _cmap, _at_depth,
                               _HAS_CARTOPY)
-from wa_basemap import add_tectonic_outlines, add_tectonic_background
+from wa_basemap import (add_tectonic_outlines, add_tectonic_background,
+                        add_crustal_boundaries, boundaries_legend)
 try:
     import cartopy.crs as ccrs
 except ImportError:
@@ -41,7 +42,11 @@ def main():
                          'nodes at each depth (the footprint mean with --footprint)')
     ap.add_argument('--clim-rel', type=float, default=None,
                     help='rel colour limit +/- %% (default 6 for Vs, 4 for xi, 3 for Vp/Vs)')
-    ap.add_argument('--overlay', default='outlines', choices=['outlines','filled','none'])
+    ap.add_argument('--overlay', default='boundaries',
+                    choices=['boundaries', 'outlines', 'both', 'filled', 'none'],
+                    help='boundaries = GSWA major crustal boundaries (default); outlines = 10M '
+                         'tectonic-unit outlines; both; filled = coloured domains; none')
+    ap.add_argument('--bnd-npz', default=None, help='override the crustal-boundaries npz')
     ap.add_argument('--major', action='store_true')
     ap.add_argument('--smooth', action='store_true')
     ap.add_argument('--interp', default='rbf')
@@ -142,9 +147,13 @@ def main():
         # Ocean mask + coastline ON TOP of velocity (grey ocean hides offshore)
         _add_states_ocean(ax)
         # Tectonic OUTLINES on top (between velocity and ocean-edge)
-        if args.overlay=='outlines':
-            add_tectonic_outlines(ax, lw=0.4, alpha=0.65, zorder=6,
-                                  transform=tr, major_only=args.major)
+        if args.overlay in ('outlines', 'both'):
+            add_tectonic_outlines(ax, lw=0.4, alpha=0.65 if args.overlay == 'outlines' else 0.35,
+                                  zorder=6, transform=tr, major_only=args.major)
+        if args.overlay in ('boundaries', 'both'):
+            bpath = add_crustal_boundaries(ax, args.bnd_npz, transform=tr)
+            if zt == args.depths[0]:
+                boundaries_legend(ax, loc='lower left', fontsize=6)
 
         if fp is not None:
             fp.focus(ax, tr, veil_alpha=args.footprint_veil, zoom=not args.no_footprint_zoom)

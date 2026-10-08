@@ -33,11 +33,7 @@ except ImportError:
 def _add_structural(ax):
     """Add structural geology overlays to a panel (rivers as proxy + placeholder).
     Extend here with WA terrane-boundary shapefiles when available."""
-    if not _HAS_CARTOPY: return
-    try:
-        ax.add_feature(cfeature.RIVERS, linewidth=0.3, edgecolor='0.3', alpha=0.4, zorder=9)
-    except Exception:
-        pass
+    return   # major crustal boundaries are now drawn on every panel in main()
     # TODO: overlay GSWA terrane boundaries shapefile here:
     #   import cartopy.io.shapereader as shpreader
     #   reader = shpreader.Reader('/path/to/wa_terranes.shp')
@@ -169,6 +165,9 @@ def main():
     ap.add_argument('--min-ndat', type=int, default=35)
     ap.add_argument('--max-dist', type=float, default=0.5)
     ap.add_argument('--out-dir', default='figures/panels')
+    ap.add_argument('--no-boundaries', action='store_true',
+                    help='omit the GSWA major crustal boundaries')
+    ap.add_argument('--bnd-npz', default=None, help='override the crustal-boundaries npz')
     import footprint as _fpmod
     _fpmod.add_args(ap)
     ap.add_argument('--div-gap', type=float, default=0.07,
@@ -214,6 +213,13 @@ def main():
         for k,zt in enumerate(depths):
             _panel(fig, rects[k], d, zt, args.field, mode, args, wa,
                    Lon_wa, Lat_wa, Lon_sm, Lat_sm, ndat_wa, sm, first=(k==0))
+        if not args.no_boundaries:
+            from wa_basemap import add_crustal_boundaries, boundaries_legend
+            trb = ccrs.PlateCarree() if _HAS_CARTOPY else None
+            for k, ax in enumerate(_MAP_AXES):
+                add_crustal_boundaries(ax, args.bnd_npz, transform=trb)
+                if k == 0:
+                    boundaries_legend(ax, loc='lower left', fontsize=6)
         if fp is not None:
             tr = ccrs.PlateCarree() if _HAS_CARTOPY else None
             for ax in _MAP_AXES:

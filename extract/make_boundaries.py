@@ -73,9 +73,18 @@ def main():
             if cand in flds: nf=cand; break
     rec_names=[r.get(nf,'') for r in recs] if nf else ['']*len(recs)
     names=[rec_names[i] if i<len(rec_names) else '' for i in rec_idx]   # one per part
+    # attributes for map styling (both the 2021 2.5M and 2025 versions carry these;
+    # the type field is 'TYPE' in one and 'TYPE_' in the other)
+    def per_part(*cands):
+        f=next((c for c in cands if c in flds), None)
+        vals=[r.get(f,'') for r in recs] if f else ['']*len(recs)
+        return np.array([vals[i] if i<len(vals) else '' for i in rec_idx]), f
+    scale,f_s=per_part('FEAT_SCALE'); conf,f_c=per_part('FEAT_CONF'); btype,f_t=per_part('TYPE','TYPE_')
+    print(f"  attributes: scale<-{f_s} conf<-{f_c} type<-{f_t}")
     np.savez_compressed(args.out_npz,
         lines=_objarr([np.asarray(l,np.float32) for l in lines]),
         names=np.array(names), rec_idx=np.array(rec_idx),
+        scale=scale, conf=conf, btype=btype,
         name_field=np.array([nf or '']))
     print(f"  {sum(1 for x in names if x)} of {len(names)} parts named, "
           f"{len(set(x for x in names if x))} distinct names")
