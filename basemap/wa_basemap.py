@@ -20,12 +20,22 @@ from matplotlib.patches import Polygon as MplPoly
 from matplotlib.collections import PatchCollection
 
 def _find_npz():
-    for p in [os.environ.get('WA_TECTONICS_NPZ',''),
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wa_tectonics.npz'),
-              'wa_tectonics.npz']:
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = [os.environ.get('WA_TECTONICS_NPZ', '')]
+    try:                                         # config.py (honours $WA_DERIVED)
+        import sys
+        sys.path.insert(0, os.path.join(here, '..'))
+        import config
+        cands.append(getattr(config, 'TECTONICS_NPZ', ''))
+    except Exception:
+        pass
+    cands += [os.path.join(here, 'wa_tectonics.npz'),
+              os.path.join(here, '..', 'data', 'wa_tectonics.npz'), 'wa_tectonics.npz']
+    for p in cands:
         if p and os.path.isfile(p):
             return p
-    raise FileNotFoundError("wa_tectonics.npz not found (set $WA_TECTONICS_NPZ)")
+    raise FileNotFoundError("wa_tectonics.npz not found ($WA_TECTONICS_NPZ, config.TECTONICS_NPZ "
+                            "via $WA_DERIVED, or data/)")
 
 _CACHE = None
 def _load():

@@ -32,6 +32,11 @@ docs/
 - numpy, scipy, matplotlib, cartopy (for ocean mask / coastline)
 - No geopandas/fiona/pyshp needed — pure-Python shapefile readers in extract/
 
+## Other machines
+`tools/pack_data.sh` (on d204403) bundles the data (models, sections, Moho, stations, footprint,
+GSWA caches) into one tarball; unpack it, `export WA_DATA=~/wa_data` and
+`source env_stage6.sh` - see docs/CHEATSHEET.md section 8b.
+
 ## Setup
 1. Edit `config.py` (or set env vars WA_SHAPEFILE_ROOT, WA_DERIVED, WA_MOHO, WA_STATIONS).
 2. Build the basemap caches (once):

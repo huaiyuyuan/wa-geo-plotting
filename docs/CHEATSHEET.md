@@ -5,6 +5,7 @@ figures go, and the exact command. Run everything on d204403 from the repo root.
 
 ```bash
 source /data/25/yuan/github/wa-geo-plotting/env_stage6.sh    # sets the variables below, cd's to the repo
+# other machines: export WA_DATA=~/wa_data first (section 8b)
 ```
 
 ---------------------------------------------------------------------------------------
@@ -238,6 +239,41 @@ concealed unit, e.g. Madura / Coompana under the Eucla Basin). Labels: `tectonic
 (level 1 = major, 2 = minor; lon/lat/angle editable).
 
 ---------------------------------------------------------------------------------------
+## 8b. Plotting on another machine (basin, mantle, laptop)
+Code comes from GitHub; everything else comes as one bundle made on d204403.
+```bash
+# on d204403: models (default iter 2 8 10 11), sections, Moho, stations, footprint, GSWA caches
+tools/pack_data.sh                            # -> ~/wa_plot_data.tgz  (-i "8 11" to pick models)
+tools/pack_data.sh --cartopy                  # + Natural Earth coastlines, for machines offline
+# d204403 cannot reach basin directly: stage through Pawsey, pull on basin/mantle
+scp ~/wa_plot_data.tgz data-mover.pawsey.org.au:~/transfer/
+#   on basin:  rsync -av <user>@setonix.pawsey.org.au:~/transfer/wa_plot_data.tgz ~/
+
+# on the other machine (once)
+git clone git@github.com:huaiyuyuan/wa-geo-plotting.git
+tar xzf wa_plot_data.tgz -C ~                 # -> ~/wa_data
+conda create -n wgp -c conda-forge python=3.11 numpy scipy matplotlib cartopy   # (+ pdfplumber, tk)
+# every session
+conda activate wgp
+export WA_DATA=~/wa_data; source ~/wa-geo-plotting/env_stage6.sh
+```
+| In the bundle (`~/wa_data/`) | From d204403 |
+|---|---|
+| `stage6/Fvs.iter.N.*.npz` | `$ST/` (22-35 MB each) |
+| `stage6/figures/xsections/sections.txt` | `$XS` |
+| `moho/AR23-moho-hmp.txt` | `/workspace/Others.data/AusMoho2023/` |
+| `stations/stations_v2.txt` | `…/ASDF.processing/pathqc.v2/` |
+| `footprint/wa_array_footprint.npz`, `wa_array_outline.txt` | `…/ASDF.processing/footprint/` |
+| `derived/wa_tectonics.npz`, `wa_lithology.npz`, `wa_crustal_boundaries.npz` | `/workspace/shape.files/derived/` |
+| `cartopy_data/` (with `--cartopy`) | `/data/25/yuan/mfiles/cartopy_data` |
+
+With `WA_DATA` set, `env_stage6.sh` points `$ST`, `$XS`, `$MOHO`, `$FVS*` and `config.py`
+(via `WA_DERIVED`, `WA_STATIONS`, `WA_FOOTPRINT_DIR`, `WA_TECTONICS_NPZ`) at the bundle, and
+`$FIG` at `~/wa_data/stage6/figures` (set `FIG` first to write elsewhere). All commands above then
+run unchanged. New model? Re-run `tools/pack_data.sh -i "12"` and unpack over the old bundle.
+Windows laptop: use WSL (Ubuntu) and the same steps.
+
+---------------------------------------------------------------------------------------
 ## 9. MATLAB redraw (optional)
 ```bash
 python3 plotting/export_matlab.py --fvs $FVS8 --vel vsv_true --load-sections $XS --moho $MOHO \
@@ -263,6 +299,7 @@ git pull                                                   # update the repo
 | `Vpvs is fixed at 1.7300 … skipped` | model does not invert Vp/Vs: use `$FVS11` |
 | picker: `FigureCanvasAgg is non-interactive` | no display / toolkit: `ssh -Y`, or `conda install -n obspy tk` (or `tornado` for the browser picker) |
 | labels look wide | Arial Narrow / Liberation Sans Narrow not installed (falls back to DejaVu) |
+| `tar: …/Downloads/wgp_*.tgz: Cannot open` | files from Claude land in `/mnt/c/Users/MIHYUAN/Downloads/` on d204403 (WSL), not `~/Downloads` |
 | `gm display: Unable to load font` | `gm display -font fixed file.png` or `eog file.png` |
 | section ends saturated at all depths | extrapolation beyond the model nodes: points > 0.5 deg from a node are now blank (`--max-node-dist`, 0 = off); check a line with `python3 tests/check_section_nodes.py $FVS11 $XS EW7 EW8` |
 
