@@ -104,15 +104,15 @@ def _strip_height_in(g):
     return h
 
 
-def _add_geology(top_ax, axes, plon, plat, dist):
+def _add_geology(top_ax, axes, plon, plat, dist, names=None):
     if _GEO is None:
         return None
     import xsection_strips as xs
     res = xs.add_profile_strips(top_ax, axes, plon, plat, dist,
-                                litho=_GEO['litho'], tectonic=_GEO['tect'],
-                                boundaries=_GEO['bnd'], label_boundaries=_GEO['names'],
+                                litho=_GEO['litho'], tectonic=_GEO['tect'], boundaries=_GEO['bnd'],
+                                label_boundaries=_GEO['names'] if names is None else names,
                                 boundary_lines=_GEO.get('lines', False))
-    if res.crossings:
+    if res.crossings and names is not False:
         print('  boundary crossings: ' + ', '.join(
             f"{c.dist:.0f} km" + (f" ({'/'.join(c.names)})" if c.names else '')
             for c in res.crossings))
@@ -170,6 +170,9 @@ def _great_circle_path(lat1, lon1, lat2, lon2, ds_deg=0.08):
 
 
 # ── Profile interpolation ─────────────────────────────────────────────────────
+_RBF_CACHE = []        # [(data3d, Lon, Lat, RBFInterpolator)] - same arrays, same fit
+
+
 def _sample_profile(Lon, Lat, data3d, prof_lon, prof_lat):
     """
     Interpolate data3d[npts, nz] onto profile points [n_prof].
@@ -190,8 +193,17 @@ def _sample_profile(Lon, Lat, data3d, prof_lon, prof_lat):
     row_all_finite = np.isfinite(data3d).all(axis=1)
     if row_all_finite.sum() >= 10:
         try:
-            rbf = RBFInterpolator(pts[row_all_finite], data3d[row_all_finite],
-                                  kernel='thin_plate_spline', smoothing=0.01)
+            # the fit depends only on the model, not the profile: build it once per
+            # array and reuse it for every section (the dense solve is the slow part)
+            rbf = None
+            for arr, lo, la, f in _RBF_CACHE:
+                if arr is data3d and lo is Lon and la is Lat:
+                    rbf = f
+            if rbf is None:
+                rbf = RBFInterpolator(pts[row_all_finite], data3d[row_all_finite],
+                                      kernel='thin_plate_spline', smoothing=0.01)
+                _RBF_CACHE.append((data3d, Lon, Lat, rbf))
+                del _RBF_CACHE[:-4]
             out[:, :] = rbf(qpts)        # evaluates all nz columns in one call
             # Depths where some needed node was NaN: those columns may still be
             # fine (we used all-finite rows); only redo columns that are all-nan.
@@ -548,23 +560,47 @@ def _ginput_sections(d, ref_sections=None, stations=None, tect_npz=None, bnd_npz
     Left click = start, left click = end (the great-circle line is drawn at once);
     right click = undo the last point; Enter = done; Esc = quit without picking.
     Returns [(lat1, lon1, lat2, lon2, label)] named NS1.. / EW1.. by orientation."""
+    # import everything first: some modules call matplotlib.use('Agg') on import, which
+    # would switch an interactive backend chosen earlier straight back to Agg
+    import cartopy.crs as ccrs
+    from plot_depth_slice import _add_states_ocean
+    import wa_basemap as wb
+    webagg, errs = False, []
+    print(f"  DISPLAY={os.environ.get('DISPLAY', '') or '(not set)'}")
     for bk in ['TkAgg', 'QtAgg', 'Qt5Agg', 'GTK3Agg']:
         try:
             plt.switch_backend(bk)
             break
-        except Exception:
-            continue
-    if matplotlib.get_backend().lower() == 'agg':
-        print("ERROR: no interactive backend available (headless?). "
-              "Run on a machine with a display, or use --sections / --load-sections.")
+        except Exception as e:
+            errs.append(f"{bk}: {str(e).splitlines()[0]}")
+    else:                                   # no window system: pick in a web browser
+        try:
+            plt.switch_backend('WebAgg')
+            webagg = True
+        except Exception as e:
+            errs.append(f"WebAgg: {str(e).splitlines()[0]}")
+    canvas = type(plt.figure().canvas).__name__; plt.close('all')
+    if canvas == 'FigureCanvasAgg':
+        print("ERROR: no interactive matplotlib backend:\n    " + "\n    ".join(errs) +
+              "\n  Fix: run where a display reaches this shell (ssh -X / -Y, or the desktop),"
+              "\n       or install a GUI toolkit in this env (conda install tk), or tornado for"
+              "\n       the browser picker (conda install tornado).")
         return []
-    import cartopy.crs as ccrs
-    from plot_depth_slice import _add_states_ocean
-    import wa_basemap as wb
+    if errs:
+        print("  (skipped: " + "; ".join(errs) + ")")
+    print(f"  picker backend: {plt.get_backend()}")
+    if webagg:
+        print("  No window system - the map opens in a WEB BROWSER: open the URL printed below\n"
+              "  (from another machine: ssh -L 8988:localhost:8988 this-host, then\n"
+              "  http://localhost:8988). Click inside the map; Enter when done.")
     Lon, Lat = np.asarray(d['Lon'], float), np.asarray(d['Lat'], float)
     tr = ccrs.PlateCarree()
     proj = ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
     fig = plt.figure(figsize=(11, 11))
+    if type(fig.canvas).__name__ == 'FigureCanvasAgg':
+        plt.close(fig)
+        print(f"ERROR: backend fell back to Agg ({plt.get_backend()}) - nothing to click on.")
+        return []
     ax = fig.add_axes([0.04, 0.04, 0.92, 0.88], projection=proj)
     cb = (Lon.min() - 1.0, Lon.max() + 1.0, Lat.min() - 1.0, Lat.max() + 1.0)
     try:
@@ -632,19 +668,29 @@ def _ginput_sections(d, ref_sections=None, stations=None, tect_npz=None, bnd_npz
                 a.remove()
             title()
 
+    def finish():
+        plt.close(fig)
+        if webagg:                                     # end plt.show()'s web server loop
+            from tornado.ioloop import IOLoop
+            loop = IOLoop.current()
+            loop.add_callback(loop.stop)
+
     def on_key(ev):
         if ev.key == 'enter':
             done['ok'] = True
-            plt.close(fig)
+            finish()
         elif ev.key == 'escape':
-            plt.close(fig)
+            finish()
 
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event', on_key)
     title()
     print("\nPick: left click start, left click end (repeat); right click undoes; "
           "Enter when done, Esc to quit.")
-    plt.show(block=True)
+    try:
+        plt.show(block=True)
+    except KeyboardInterrupt:
+        pass
     if not done['ok']:
         print("Picking cancelled - nothing saved.")
         return []
@@ -889,46 +935,71 @@ def _load_sections(path):
 
 
 
+STACK_FIELDS = ('vsv', 'dvsv', 'xi', 'dxi', 'vpvs', 'dvpvs', 'vdiff', 'err')
+
+
 def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ncolors=16, d_max=None, sigma_vsv=1.5, clim_rel=6.0,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
                ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
                xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None, clim_vpvs=3.0,
-               clim_diff=4.0, maxd_km=None, tag='', group=''):
+               clim_diff=4.0, maxd_km=None, tag='', group='', col_w_in=7.0):
+    """Stack fields for all sections on one page. Rows = sections (same height, width
+    proportional to length, longest spans the column width); columns = fields
+    (field = 'vsv' or a list / comma string such as 'vsv,vpvs': side by side, same rows,
+    same km/inch). One field uses page_w_in, several use col_w_in each.
+    ve = vertical exaggeration. Each panel has its own colour bar."""
     global DIV_GAP, DIV_WHITE
     if div_gap is not None:
         DIV_GAP = div_gap
     if div_white is not None:
         DIV_WHITE = div_white
-    """Stack ONE field for all sections on a single page. Rows = sections, same
-    height, width proportional to length, longest spans the full page width.
-    ve = vertical exaggeration (depth stretched x this; 1 = true scale, flat;
-    higher = taller). Each panel has its own colorbar."""
     import matplotlib.pyplot as plt
+    fields = [f.strip() for f in (field.split(',') if isinstance(field, str) else field) if f.strip()]
     Lon = d['Lon']; Lat = d['Lat']; z = d['z']
     if d_max: zm = z <= d_max; z = z[zm]
     else: zm = np.ones(len(z), bool)
     zbot = z[-1]
+    is_zt = 'ZT' in os.path.basename(getattr(plot_section,'_fvsname','')) or _varies(d, 'Xi')
+    vname = _vname(d, is_zt)
 
     FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','dxi':'Xi','err':'Vsv_err',
             'vpvs':'Vpvs','dvpvs':'Vpvs','vdiff':'Vsv'}
-    arrname = FKEY.get(field,'Vsv')
-    if arrname not in d:
-        print(f"  field {field}: {arrname} not in Fvs"); return
-    if field == 'vdiff' and _REF is None:
-        sys.exit("--stack vdiff needs --ref-fvs <reference model>")
-    if field in ('xi', 'dxi', 'vpvs', 'dvpvs') and not _varies(d, arrname):
-        print(f"  field {field}: {arrname} is fixed at {np.nanmean(d[arrname]):.4f} in this "
-              f"model - nothing to plot (use a model that inverts it)"); return
-    ARR = d[arrname][:, zm]
-    if ref_mean is None and field=='dvsv':
-        ref_mean = np.array([np.nanmean(d['Vsv'][:,zm][:,k]) for k in range(ARR.shape[1])])
-    if field=='dvpvs':
-        vref = np.nanmean(ARR, axis=0)          # whole-model mean Vp/Vs at each depth
-    if field=='dxi':
-        xref = _xi_ref(ARR, xi_ref)
-        print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
-              f"{np.nanmin(xref):.3f}-{np.nanmax(xref):.3f}")
+    F = []                                   # per-field settings
+    for f in fields:
+        arrname = FKEY.get(f, 'Vsv')
+        if arrname not in d:
+            print(f"  field {f}: {arrname} not in Fvs - skipped"); continue
+        if f == 'vdiff' and _REF is None:
+            sys.exit("--stack vdiff needs --ref-fvs <reference model>")
+        if f in ('xi', 'dxi', 'vpvs', 'dvpvs') and not _varies(d, arrname):
+            print(f"  field {f}: {arrname} is fixed at {np.nanmean(d[arrname]):.4f} in this "
+                  f"model - skipped (use a model that inverts it)"); continue
+        ARR = d[arrname][:, zm]
+        st = dict(f=f, arr=ARR)
+        if f == 'dvsv':
+            st['ref'] = ref_mean if ref_mean is not None else np.nanmean(ARR, axis=0)
+        elif f == 'dvpvs':
+            st['ref'] = np.nanmean(ARR, axis=0)          # whole-model mean at each depth
+        elif f == 'dxi':
+            st['ref'] = _xi_ref(ARR, xi_ref)
+            print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
+                  f"{np.nanmin(st['ref']):.3f}-{np.nanmax(st['ref']):.3f}")
+        st['cmap'], st['clab'], st['ext'] = {
+            'vsv':   (_cmap(CMAP_ABS, ncolors), f'{vname} (km/s)', 'both'),
+            'dvsv':  (_cmap('RdBu', ncolors), f'd{vname} (%)', 'both'),
+            'xi':    (_cmap('RdBu', ncolors), 'xi', 'both'),
+            'dxi':   (_cmap('RdBu', ncolors), f'dlnXi (%) vs {_xi_ref_label(xi_ref)}', 'both'),
+            'vpvs':  (_cmap(CMAP_VPVS, ncolors), 'Vp/Vs', 'both'),
+            'dvpvs': (_cmap('RdBu', ncolors), 'dln(Vp/Vs) (%) vs model mean at each depth', 'both'),
+            'vdiff': (_cmap('RdBu', ncolors), f'{vname} vs {_REF["label"] if _REF else "ref"} (%)', 'both'),
+        }.get(f, (_cmap('YlOrRd', ncolors), f'{vname} IQR/2', 'max'))
+        st['name'] = {'vsv': vname, 'dvsv': f'd{vname}', 'dxi': 'dlnXi', 'xi': 'xi', 'vpvs': 'Vp/Vs',
+                      'dvpvs': 'dln(Vp/Vs)', 'err': f'{vname} error',
+                      'vdiff': f'{vname} minus {_REF["label"] if _REF else "ref"}'}.get(f, f)
+        F.append(st)
+    if not F:
+        print("  nothing to plot"); return
 
     _mi = None
     if moho_file:
@@ -939,117 +1010,104 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             _mi=RectBivariateSpline(mla,mlo,md[:,2].reshape(len(mla),len(mlo)),kx=1,ky=1)
         except Exception: pass
 
-    is_zt = 'ZT' in os.path.basename(getattr(plot_section,'_fvsname','')) or _varies(d, 'Xi')
-    vname = _vname(d, is_zt)
-
     prof=[]
     for (la1,lo1,la2,lo2,lab) in sections:
         plat,plon,dist=_great_circle_path(la1,lo1,la2,lo2,ds_deg)
-        samp=_sample_profile(Lon,Lat,ARR,plon,plat)
-        if field=='dvsv':
-            samp=(samp-ref_mean[None,:])/ref_mean[None,:]*100
-        elif field=='dxi':
-            samp=(samp/xref[None,:]-1.0)*100
-        elif field=='dvpvs':
-            samp=(samp/vref[None,:]-1.0)*100
-        elif field=='vdiff':
-            samp=_ref_diff(samp, plon, plat, z)
+        data = {}
+        for st in F:
+            samp = _sample_profile(Lon, Lat, st['arr'], plon, plat)
+            if st['f'] == 'dvsv':
+                samp = (samp - st['ref'][None, :]) / st['ref'][None, :] * 100
+            elif st['f'] in ('dxi', 'dvpvs'):
+                samp = (samp / st['ref'][None, :] - 1.0) * 100
+            elif st['f'] == 'vdiff':
+                samp = _ref_diff(samp, plon, plat, z)
+            data[st['f']] = samp
         mp=None
         if _mi is not None:
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
-        prof.append(dict(lab=lab,dist=dist,data=samp,moho=mp,plat=plat,plon=plon))
+        prof.append(dict(lab=lab,dist=dist,data=data,moho=mp,plat=plat,plon=plon))
     maxd=max(p['dist'][-1] for p in prof)
     if maxd_km:                 # shared scale across split pages (same km/inch on each)
         maxd=max(maxd, maxd_km)
 
-    # Horizontal scale: longest fills page_w_in. Row height from VE:
-    #   km_per_in = maxd/page_w_in ; row_h_in = zbot*ve/km_per_in
-    km_per_in, ve_h = _section_scale(maxd, zbot, ve, page_w_in)
+    # Horizontal scale: longest fills the column width. Row height from VE:
+    #   km_per_in = maxd/col_w ; row_h_in = zbot*ve/km_per_in
+    ncol = len(F)
+    col_w = page_w_in if ncol == 1 else col_w_in
+    km_per_in, ve_h = _section_scale(maxd, zbot, ve, col_w)
     if row_h_in is None:
         row_h_in = ve_h
 
-    if field=='vsv':
-        cmap=_cmap(CMAP_ABS,ncolors); clab=f'{vname} (km/s)'; ext='both'
-    elif field=='dvsv':
-        cmap=_cmap('RdBu',ncolors); clab=f'd{vname} (%)'; ext='both'
-    elif field=='xi':
-        cmap=_cmap('RdBu',ncolors); clab='xi'; ext='both'
-    elif field=='dxi':
-        cmap=_cmap('RdBu',ncolors); clab=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'; ext='both'
-    elif field=='vpvs':
-        cmap=_cmap(CMAP_VPVS,ncolors); clab='Vp/Vs'; ext='both'
-    elif field=='dvpvs':
-        cmap=_cmap('RdBu',ncolors); clab='dln(Vp/Vs) (%) vs model mean at each depth'; ext='both'
-    elif field=='vdiff':
-        cmap=_cmap('RdBu',ncolors); clab=f'{vname} vs {_REF["label"]} (%)'; ext='both'
-    else:
-        cmap=_cmap('YlOrRd',ncolors); clab=f'{vname} IQR/2'; ext='max'
+    def limits(f, data):
+        if vmin is not None and vmax is not None and ncol == 1:
+            return vmin, vmax
+        if f in ('vsv', 'vpvs'):
+            if f == 'vsv' and vmin is not None and vmax is not None:
+                return vmin, vmax
+            fv = data[np.isfinite(data)]
+            med, sd = np.nanmedian(fv), np.nanstd(fv)
+            return med - sigma_vsv * sd, med + sigma_vsv * sd
+        if f == 'err':
+            fv = data[np.isfinite(data)]; return 0, np.nanpercentile(fv, 90)
+        return {'dvsv': (-clim_rel, clim_rel), 'xi': (0.90, 1.10), 'dxi': (-clim_xi, clim_xi),
+                'dvpvs': (-clim_vpvs, clim_vpvs), 'vdiff': (-clim_diff, clim_diff)}.get(f, (vmin, vmax))
 
     n=len(prof)
     strip_h=_strip_height_in(_GEO)          # room for geology strips above each row
-    gap_in=gap_in+strip_h; top_in=0.9+strip_h
+    gap_in=gap_in+strip_h; top_in=0.9+strip_h+(0.25 if ncol > 1 else 0)
     fig_h=n*row_h_in + (n-1)*gap_in + 1.2 + strip_h
-    fig_w=page_w_in + 1.8                       # + per-panel colorbar room
+    left_in = 0.08 * (page_w_in + 1.8)                       # as the one-field page
+    # next column starts right after this page's longest row (same km/inch throughout)
+    page_long = max(p['dist'][-1] for p in prof)
+    pitch = page_long / km_per_in + 1.05                     # panel + colour bar + label
+    fig_w = left_in + ncol * pitch + 0.15 if ncol > 1 else page_w_in + 1.8
     fig=plt.figure(figsize=(fig_w,fig_h))
-    fname = {'dxi': 'dlnXi', 'vpvs': 'Vp/Vs', 'dvpvs': 'dln(Vp/Vs)',
-             'vdiff': f'{os.path.basename(getattr(plot_section, "_fvsname", "")).replace(".npz", "")}'
-                      f' minus {_REF["label"] if _REF else "ref"}'}.get(field, field.upper())
-    fig.suptitle(f'{fname} ({vname}) — {group + " " if group else ""}{n} sections '
-                 f'[depth 0-{zbot:.0f} km, page width {maxd:.0f} km, VE {ve:.0f}x]',
+    names = ' | '.join(st['name'] for st in F)
+    fig.suptitle(f'{names} — {group + " " if group else ""}{n} sections '
+                 f'[depth 0-{zbot:.0f} km, column width {maxd:.0f} km, VE {ve:.0f}x]',
                  fontsize=11, fontweight='bold')
-
-    usable=page_w_in/fig_w
     rh=row_h_in/fig_h
     geo_res=[]
-    for i,p in enumerate(prof):
-        w=(p['dist'][-1]/maxd)*usable
-        y0=1-(top_in/fig_h)-(i+1)*rh-i*(gap_in/fig_h)
-        ax=fig.add_axes([0.08, y0, w, rh])
-        D,Z=np.meshgrid(p['dist'],z,indexing='ij')
-        # colour limits: explicit --vmin/--vmax win; else per-field defaults
-        if vmin is not None and vmax is not None:
-            vmn,vmx=vmin,vmax
-        elif field in ('vsv', 'vpvs'):
-            fv=p['data'][np.isfinite(p['data'])]
-            med,std=np.nanmedian(fv),np.nanstd(fv); vmn,vmx=med-sigma_vsv*std,med+sigma_vsv*std
-        elif field=='err':
-            fv=p['data'][np.isfinite(p['data'])]; vmn,vmx=0,np.nanpercentile(fv,90)
-        elif field=='dvsv':
-            vmn,vmx=-clim_rel,clim_rel
-        elif field=='xi':
-            vmn,vmx=0.90,1.10
-        elif field=='dxi':
-            vmn,vmx=-clim_xi,clim_xi
-        elif field=='dvpvs':
-            vmn,vmx=-clim_vpvs,clim_vpvs
-        elif field=='vdiff':
-            vmn,vmx=-clim_diff,clim_diff
-        else:
-            vmn,vmx=vmin,vmax
-        im=ax.pcolormesh(D,Z,p['data'],cmap=cmap,vmin=vmn,vmax=vmx,shading='auto')
-        ax.set_ylim(zbot,0); ax.set_xlim(0,p['dist'][-1])
-        ax.set_ylabel('Depth',fontsize=7); ax.tick_params(labelsize=6)
-        ax.set_xticks(np.arange(0,p['dist'][-1]+1,200))
-        ax.text(0.01,0.90,f"{p['lab']} [{p['dist'][-1]:.0f} km]",transform=ax.transAxes,
-                fontsize=8,fontweight='bold',va='top',
-                bbox=dict(fc='white',ec='none',alpha=0.7,pad=1))
-        if p['moho'] is not None:
-            _draw_moho(ax, p['dist'], p['moho'], zbot, moho_mask, lw=0.9)
-        if i==n-1: ax.set_xlabel('Distance (km)',fontsize=8)
-        # per-panel colorbar immediately right of THIS panel
-        cax=fig.add_axes([0.08+w+0.008, y0, 0.012, rh])
-        cb=fig.colorbar(im,cax=cax,extend=ext); cb.ax.tick_params(labelsize=6)
-        if i==0: cb.set_label(clab,fontsize=8)
-        geo_res.append(_add_geology(ax,[ax],p['plon'],p['plat'],p['dist']))
+    for c, st in enumerate(F):
+        x0_in = left_in + c * pitch
+        if ncol > 1:
+            fig.text((x0_in + col_w / 2) / fig_w, 1 - 0.75 / fig_h, st['name'], ha='center',
+                     va='top', fontsize=11, fontweight='bold')
+        for i,p in enumerate(prof):
+            w_in = p['dist'][-1] / km_per_in
+            y0=1-(top_in/fig_h)-(i+1)*rh-i*(gap_in/fig_h)
+            ax=fig.add_axes([x0_in / fig_w, y0, w_in / fig_w, rh])
+            D,Z=np.meshgrid(p['dist'],z,indexing='ij')
+            data = p['data'][st['f']]
+            vmn, vmx = limits(st['f'], data)
+            im=ax.pcolormesh(D,Z,data,cmap=st['cmap'],vmin=vmn,vmax=vmx,shading='auto')
+            ax.set_ylim(zbot,0); ax.set_xlim(0,p['dist'][-1])
+            ax.set_ylabel('Depth',fontsize=7); ax.tick_params(labelsize=6)
+            ax.set_xticks(np.arange(0,p['dist'][-1]+1,200))
+            ax.text(0.01,0.90,f"{p['lab']} [{p['dist'][-1]:.0f} km]",transform=ax.transAxes,
+                    fontsize=8,fontweight='bold',va='top',
+                    bbox=dict(fc='white',ec='none',alpha=0.7,pad=1))
+            if p['moho'] is not None:
+                _draw_moho(ax, p['dist'], p['moho'], zbot, moho_mask, lw=0.9)
+            if i==n-1: ax.set_xlabel('Distance (km)',fontsize=8)
+            # per-panel colorbar immediately right of THIS panel
+            cax=fig.add_axes([(x0_in + w_in + 0.09) / fig_w, y0, 0.13 / fig_w, rh])
+            cb=fig.colorbar(im,cax=cax,extend=st['ext']); cb.ax.tick_params(labelsize=6)
+            if i==0: cb.set_label(st['clab'],fontsize=8)
+            # boundary names only above the first column (arrows on every column)
+            geo_res.append(_add_geology(ax, [ax], p['plon'], p['plat'], p['dist'],
+                                        names=None if c == 0 else False))
 
     if geo_res:
         _geology_legend(fig, geo_res, ax, below_in=0.55)
     os.makedirs(out_dir,exist_ok=True)
-    out=os.path.join(out_dir,f'xsection_stack.{field}{tag}.png')
+    key = '_'.join(st['f'] for st in F)
+    out=os.path.join(out_dir,f'xsection_stack.{key}{tag}.png')
     fig.savefig(out,dpi=150,bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'),bbox_inches='tight')
     plt.close(fig)
-    print(f"Stack ({field}): {out} (+ .pdf)")
+    print(f"Stack ({key}): {out} (+ .pdf)")
 
 
 def main():
@@ -1118,9 +1176,9 @@ def main():
     ap.add_argument('--load-sections', default=None,
                     help='Load section list from a file (skip ginput)')
     ap.add_argument('--stack', default=None,
-                    choices=['vsv','dvsv','xi','dxi','vpvs','dvpvs','vdiff','err'],
-                    help='Stack ONE field for all sections on a single A4 page '
-                         '(rows=sections, same height, width proportional to length).')
+                    help='Stack fields for all sections, one page per orientation (rows = '
+                         'sections). One field, or a comma list for columns side by side, e.g. '
+                         'vsv,vpvs. Fields: ' + ', '.join(STACK_FIELDS))
     ap.add_argument('--vmin', type=float, default=None,
                     help='Fixed colour min for the stacked field (all panels same scale)')
     ap.add_argument('--vmax', type=float, default=None,
@@ -1309,6 +1367,9 @@ def main():
 
     # Stacked single-field figure (one page, all sections) — then return
     if args.stack:
+        bad = [f for f in args.stack.split(',') if f.strip() and f.strip() not in STACK_FIELDS]
+        if bad:
+            ap.error(f"--stack: unknown field(s) {bad}; choose from {', '.join(STACK_FIELDS)}")
         zmask=(d['z']<=args.d_max) if args.d_max else np.ones(len(d['z']),bool)
         rmean=np.array([np.nanmean(d['Vsv'][:,zmask][:,k]) for k in range(zmask.sum())])
         kw = dict(moho_file=args.moho, ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,

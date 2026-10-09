@@ -333,9 +333,17 @@ class BoundarySet:
                               & (self.ymax >= lat.min() - pad_deg)
                               & (self.ymin <= lat.max() + pad_deg))
         found = []
+        bx0, by0 = P.min(axis=0) - 1.0
+        bx1, by1 = P.max(axis=0) + 1.0
         for k in cand:
             Q = _local_xy(self.lines[k][:, 0], self.lines[k][:, 1], lon0, lat0)
-            q, s = Q[:-1], Q[1:] - Q[:-1]                 # (K, 2)
+            # only boundary segments whose box touches the profile's box (km frame)
+            a0, a1 = Q[:-1], Q[1:]
+            near = ((np.maximum(a0[:, 0], a1[:, 0]) >= bx0) & (np.minimum(a0[:, 0], a1[:, 0]) <= bx1)
+                    & (np.maximum(a0[:, 1], a1[:, 1]) >= by0) & (np.minimum(a0[:, 1], a1[:, 1]) <= by1))
+            if not near.any():
+                continue
+            q, s = a0[near], (a1 - a0)[near]              # (K, 2)
             denom = r[:, None, 0] * s[None, :, 1] - r[:, None, 1] * s[None, :, 0]
             qp = q[None, :, :] - p[:, None, :]
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -534,7 +542,9 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
         runs[key] = r
     crossings = []
     if boundaries is not None:
-        crossings = boundaries.crossings(lon_f, lat_f, d_f, dedupe_km=dedupe_km)
+        # the plotted great-circle path is a straight line in the crossing frame
+        # (azimuthal equidistant about its midpoint), so its own nodes are exact here
+        crossings = boundaries.crossings(lon, lat, dist, dedupe_km=dedupe_km)
         draw_boundaries(panel_axes, crossings, strip_axes=strips,
                         label_names=label_boundaries, span_km=dist[-1] - dist[0],
                         panel_lines=boundary_lines)
