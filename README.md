@@ -8,6 +8,9 @@ maps with GSWA tectonic/lithology/crustal-boundary overlays.
 the TransD inversion outputs (Fvs npz). Paths are centralised in `config.py` — edit
 that for your machine. Others *can* use it with their own shapefiles + an Fvs-format npz.
 
+**Cheatsheet - every figure, its paths and exact command: [docs/CHEATSHEET.md](docs/CHEATSHEET.md)** 
+(`source env_stage6.sh` first).
+
 ## Layout
 ```
 config.py              # ALL local paths (shapefiles, Moho, stations, derived npz) — edit this
