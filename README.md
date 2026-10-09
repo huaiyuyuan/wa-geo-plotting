@@ -101,6 +101,12 @@ Natural Earth sea/states/coast, labels, the vector legend, stations, sections) a
 section, the sampled model fields, Moho, domain-strip runs and boundary crossings, plus the
 exact colour maps; `matlab/wa_albers.m` is the map projection.
 
+## Tectonic domains: 1-D profiles and dln reference
+`basemap/domains.csv` defines domains as sets of GSWA 10M units (Yilgarn, West Australian
+Craton, Perth Basin, Albany-Fraser, Capricorn; more commented out). `plot_domain_profiles.py`
+draws their mean profiles (Vsv, Viso, xi, Vp/Vs) with lateral spread and writes the tables;
+`--ref-domain yilgarn` makes the dln maps and sections relative to the Yilgarn mean.
+
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.
 make_Fvs.py / read_posterior.py stay in noise_asdf; this repo takes the Fvs npz

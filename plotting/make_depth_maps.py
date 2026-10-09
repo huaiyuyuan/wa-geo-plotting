@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 make_depth_maps.py - the full depth-slice set in one go (plot_vsv_tectonic.py):
-every parameter that varies in each model, absolute and dln, at 10/20/30/45 km
+every parameter that varies in each model, absolute and dln, at 5/15/30/45 km
 (45 not 40: 40 km sits on the Moho artefact).
 
   ZT/xi model : Vsv (= Viso/sqrt((2+Xi^2)/3)), Viso, Xi   (abs + rel)
@@ -33,7 +33,10 @@ def main():
     ap.add_argument('--out-dir', default='figures/depth_maps')
     ap.add_argument('--tag-zt', default='ZT', help='filename prefix for the ZT model (e.g. iter8)')
     ap.add_argument('--tag-z', default='Z', help='filename prefix for the Z model')
-    ap.add_argument('--depths', nargs='+', type=float, default=[10, 20, 30, 45])
+    ap.add_argument('--depths', nargs='+', type=float, default=[5, 15, 30, 45])
+    ap.add_argument('--ref-domain', default=None,
+                    help='rel maps: dln vs this tectonic domain\'s mean (e.g. yilgarn); '
+                         'files named <tag>.<param>.rel-<domain>.<fp|wa>.png')
     ap.add_argument('--modes', nargs='+', default=['abs', 'rel'], choices=['abs', 'rel'])
     ap.add_argument('--no-footprint', action='store_true', help='full WA view, no focus')
     ap.add_argument('--overlay', default='boundaries',
@@ -70,13 +73,16 @@ def main():
     done, failed = [], []
     for tag, path, field, name, mode in jobs:
         extent = 'wa' if a.no_footprint else 'fp'      # whole WA vs footprint: never collide
-        out = os.path.join(a.out_dir, f"{tag}.{name}.{mode}.{extent}.png")
+        mtag = f"rel-{a.ref_domain}" if (mode == 'rel' and a.ref_domain) else mode
+        out = os.path.join(a.out_dir, f"{tag}.{name}.{mtag}.{extent}.png")
         cmd = [sys.executable, os.path.join(HERE, 'plot_vsv_tectonic.py'), '--fvs', path,
                '--field', field, '--mode', mode, '--overlay', a.overlay, '--major', '--smooth',
                '--depths', *map(str, a.depths), '--out', out]
         cmd += ['--div-gap', str(a.div_gap), '--div-white', str(a.div_white)]
         if not a.no_footprint:
             cmd.append('--footprint')
+        if mode == 'rel' and a.ref_domain:
+            cmd += ['--ref-domain', a.ref_domain]
         cmd += extra
         r = subprocess.run(cmd, capture_output=True, text=True)
         (done if r.returncode == 0 else failed).append(out)

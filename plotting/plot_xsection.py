@@ -313,19 +313,38 @@ def _cmap(name, n=32):
 
 
 # ── xi reference for dlnXi ────────────────────────────────────────────────────
+_REF_NODES = None     # --ref-domain: bool over model nodes (e.g. the Yilgarn); None = all nodes
+_REF_NAME = None      # its label, e.g. 'Yilgarn Craton'
+_REF_TAG = ''         # added to output names, e.g. '.ref-yilgarn'
+
+
+def _node_ref(A):
+    """dln reference at each depth: mean over the --ref-domain nodes, else all nodes."""
+    A = np.asarray(A, float)
+    return np.nanmean(A[_REF_NODES] if _REF_NODES is not None else A, axis=0)
+
+
+def _ref_label():
+    return f'{_REF_NAME} mean at each depth' if _REF_NAME else 'model mean at each depth'
+
+
 def _xi_ref(Xi, mode='depth'):
-    """Reference xi for dlnXi = (xi/ref - 1)*100, from ALL model nodes.
+    """Reference xi for dlnXi = (xi/ref - 1)*100, from ALL model nodes (or the
+    --ref-domain nodes).
     depth : mean xi of the whole model at each depth (like dVsv) - removes the
             depth trend, shows lateral variation;
     global: one mean over the whole model, all depths - note dlnXi is then just
             xi linearly rescaled (same picture as the xi panel, re-centred)."""
+    src = Xi[_REF_NODES] if _REF_NODES is not None else Xi
     if mode == 'global':
-        return np.full(Xi.shape[1], np.nanmean(Xi))
-    return np.nanmean(Xi, axis=0)
+        return np.full(Xi.shape[1], np.nanmean(src))
+    return np.nanmean(src, axis=0)
 
 
 def _xi_ref_label(mode):
-    return 'whole-model mean' if mode == 'global' else 'model mean at each depth'
+    if mode == 'global':
+        return f'{_REF_NAME} mean' if _REF_NAME else 'whole-model mean'
+    return _ref_label()
 
 
 # ── Fvs loading (optionally converting Viso -> true Vsv) ──────────────────────
@@ -437,7 +456,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     vpvs_p = _sample_profile(Lon, Lat, Vpvs, plon, plat) if Vpvs is not None else None
 
     if ref_mean is None:
-        ref_mean = np.array([np.nanmean(Vsv[:, k]) for k in range(Vsv.shape[1])])
+        ref_mean = _node_ref(Vsv)
     dln_p = (vsv_p - ref_mean[None, :]) / ref_mean[None, :] * 100.0
 
     D, Z = np.meshgrid(dist, z, indexing='ij')
@@ -516,7 +535,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     _pcolor(axes[r], vsv_p, _cmap(CMAP_ABS, ncolors), vmin_v, vmax_v,
             f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
     _pcolor(axes[r], dln_p, _cmap('RdBu', ncolors), -clim_rel, clim_rel,
-            f'd{vname} (%)', title=f'd{vname} (%) vs model mean'); r += 1
+            f'd{vname} (%)', title=f'd{vname} (%) vs {_ref_label()}'); r += 1
     if vdiff_p is not None:
         _pcolor(axes[r], vdiff_p, _cmap('RdBu', ncolors), -clim_diff, clim_diff,
                 f'{vname} vs {_REF["label"]} (%)',
@@ -546,7 +565,7 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
         _geology_legend(fig, [geo], axes[-1], ncol=4 if panel_w_in > 5 else 2)
 
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f'xsection.{label}.png')
+    out = os.path.join(out_dir, f'xsection.{label}{_REF_TAG}.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'), bbox_inches='tight')
     plt.close(fig)
@@ -998,9 +1017,9 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         ARR = d[arrname][:, zm]
         st = dict(f=f, arr=ARR)
         if f == 'dvsv':
-            st['ref'] = ref_mean if ref_mean is not None else np.nanmean(ARR, axis=0)
+            st['ref'] = ref_mean if ref_mean is not None else _node_ref(ARR)
         elif f == 'dvpvs':
-            st['ref'] = np.nanmean(ARR, axis=0)          # whole-model mean at each depth
+            st['ref'] = _node_ref(ARR)          # model (or --ref-domain) mean at each depth
         elif f == 'dxi':
             st['ref'] = _xi_ref(ARR, xi_ref)
             print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
@@ -1089,7 +1108,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     if rel:                             # what the relative fields are relative to
         reftxt = ('\n' + ', '.join({'dvsv': f'd{vname}', 'dvpvs': 'dln(Vp/Vs)',
                                     'dxi': 'dlnXi'}[f] for f in rel) + ' vs ' +
-                  (_xi_ref_label(xi_ref) if rel == ['dxi'] else 'model mean at each depth'))
+                  (_xi_ref_label(xi_ref) if rel == ['dxi'] else _ref_label()))
     fig.suptitle(f'{names} — {group + " " if group else ""}{n} sections '
                  f'[depth 0-{zbot:.0f} km, column width {maxd:.0f} km, VE {ve:.0f}x]' + reftxt,
                  fontsize=11, fontweight='bold')
@@ -1130,7 +1149,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         _geology_legend(fig, geo_res, ax, below_in=0.55)
     os.makedirs(out_dir,exist_ok=True)
     key = '_'.join(st['f'] for st in F)
-    out=os.path.join(out_dir,f'xsection_stack.{key}{tag}.png')
+    out=os.path.join(out_dir,f'xsection_stack.{key}{_REF_TAG}{tag}.png')
     fig.savefig(out,dpi=150,bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'),bbox_inches='tight')
     plt.close(fig)
@@ -1138,7 +1157,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
 
 
 def main():
-    global MAX_NODE_DIST
+    global MAX_NODE_DIST, _REF_NODES, _REF_NAME, _REF_TAG
     ap = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fvs',     required=True)
@@ -1150,6 +1169,10 @@ def main():
                     help='Label for single section (default: section)')
     ap.add_argument('--sections', nargs='+', default=None,
                     help='Multiple sections: "lat1,lon1/lat2,lon2/label" ...')
+    ap.add_argument('--ref-domain', default=None,
+                    help='dln fields (dVsv, dlnXi, dln Vp/Vs) relative to this tectonic '
+                         'domain\'s mean at each depth, e.g. yilgarn (basemap/domains.csv); '
+                         'outputs get a .ref-<domain> tag. Default: whole-model mean')
     ap.add_argument('--max-node-dist', type=float, default=MAX_NODE_DIST,
                     help='blank section points further than this (deg) from any model node, '
                          'as on the maps (default 0.5; 0 = no masking)')
@@ -1298,6 +1321,15 @@ def main():
     print(f"Loading {args.fvs} ...")
     d = _load_fvs(args.fvs, args.vel)
     plot_section._fvsname = args.fvs   # for Viso/Vsv label detection
+    if args.ref_domain:                # dln reference = a tectonic domain's mean
+        from domains import Domains
+        D = Domains(_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz))
+        _REF_NODES = D.node_mask(d, args.ref_domain)
+        _REF_NAME, _REF_TAG = D[args.ref_domain]['label'], f'.ref-{args.ref_domain}'
+        print(f"  dln reference: {_REF_NAME} mean at each depth ({_REF_NODES.sum()} nodes, "
+              f"Ndat >= 35)")
+        if not _REF_NODES.any():
+            sys.exit(f"no model nodes in domain '{args.ref_domain}'")
     global _REF
     ref_args = None
     if args.ref_fvs:
@@ -1403,7 +1435,7 @@ def main():
         if bad:
             ap.error(f"--stack: unknown field(s) {bad}; choose from {', '.join(STACK_FIELDS)}")
         zmask=(d['z']<=args.d_max) if args.d_max else np.ones(len(d['z']),bool)
-        rmean=np.array([np.nanmean(d['Vsv'][:,zmask][:,k]) for k in range(zmask.sum())])
+        rmean=_node_ref(d['Vsv'][:,zmask])
         kw = dict(moho_file=args.moho, ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
                   ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax, ncolors=args.ncolors,
                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
@@ -1437,7 +1469,7 @@ def main():
     # Full-model mean Vsv per depth → dln reference (regional, consistent)
     zmask = (d['z'] <= args.d_max) if args.d_max else np.ones(len(d['z']), bool)
     Vsv_all = d['Vsv'][:, zmask]
-    ref_mean = np.array([np.nanmean(Vsv_all[:, k]) for k in range(Vsv_all.shape[1])])
+    ref_mean = _node_ref(Vsv_all)
 
     kw['max_dist']   = maxd
     kw['km_per_in']  = km_per_in

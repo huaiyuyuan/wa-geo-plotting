@@ -1,0 +1,18 @@
+# Tectonic domains for 1-D averages and dln references (plot_domain_profiles.py,
+# --ref-domain). One per line: key,label,line colour,units
+#   units: ';'-separated  name:<10M TECTNAME>  or  parent:<parent>   (case-insensitive,
+#   en dashes = hyphens). A model node belongs to the domain if it lies inside any of
+#   these units (GSWA 1:10M tectonic units, wa_tectonics.npz). Domains may overlap
+#   (the West Australian Craton contains the Yilgarn, Capricorn, Albany-Fraser ...).
+# Add a line (or remove the '#') when a model covers a new region.
+key,label,colour,units
+yilgarn,Yilgarn Craton,#c0392b,name:Yilgarn Craton;parent:Yilgarn Craton
+wac,West Australian Craton,#2b2b2b,name:West Australian Craton
+perth,Perth Basin,#2e8b57,name:Perth Basin
+albany_fraser,Albany-Fraser Orogen,#8e44ad,name:Albany-Fraser Orogen;parent:Albany-Fraser Orogen;parent:Kepa Kurl Booya Province
+capricorn,Capricorn Orogen,#d68910,name:Capricorn Orogen;parent:Capricorn Orogen
+# pilbara,Pilbara Craton,#e377c2,name:Pilbara Craton;name:Fortescue Basin
+# canning,Canning Basin,#1f77b4,name:Canning Basin
+# kimberley,Kimberley Basin,#17becf,name:Kimberley Basin
+# officer,Officer Basin,#7f7f7f,name:Officer Basin (Phase 1);name:Officer Basin (Phase 2)
+# eucla,Eucla Basin,#b7950b,name:Eucla Basin

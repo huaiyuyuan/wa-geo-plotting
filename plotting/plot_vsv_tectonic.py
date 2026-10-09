@@ -40,6 +40,10 @@ def main():
     ap.add_argument('--mode', default='abs', choices=['abs', 'rel'],
                     help='abs = absolute value; rel = dln (%%) vs the mean of the plotted '
                          'nodes at each depth (the footprint mean with --footprint)')
+    ap.add_argument('--ref-domain', default=None,
+                    help='rel: dln vs this tectonic domain\'s mean at each depth (e.g. yilgarn, '
+                         'basemap/domains.csv) instead of the plotted nodes\' mean')
+    ap.add_argument('--tect-npz', default=None, help='override the tectonic-units npz (domains)')
     ap.add_argument('--clim-rel', type=float, default=None,
                     help='rel colour limit +/- %% (default 6 for Vs, 4 for xi, 3 for Vp/Vs)')
     ap.add_argument('--overlay', default='boundaries',
@@ -104,10 +108,19 @@ def main():
         print('  ' + fp.describe(inside))
     Lon_sm, Lat_sm = Lon_wa[sm], Lat_wa[sm]
 
+    dom_nodes, refname = None, 'mean at each depth'
+    if args.ref_domain and args.mode == 'rel':
+        from domains import Domains
+        D = Domains(args.tect_npz)
+        dom_nodes = D.node_mask(d, args.ref_domain, args.min_ndat)
+        if not dom_nodes.any():
+            sys.exit(f"no model nodes in domain '{args.ref_domain}'")
+        refname = f"{D[args.ref_domain]['label']} mean at each depth"
+        print(f"  dln reference: {refname} ({dom_nodes.sum()} nodes)")
     tr = ccrs.PlateCarree() if _HAS_CARTOPY else None
     fig = plt.figure(figsize=(15, 15))
     fig.suptitle(f"{os.path.basename(args.fvs).replace('.npz','')} — "
-                 + (f"dln{name} (%, vs mean at each depth)" if args.mode == 'rel' else name),
+                 + (f"dln{name} (%, vs {refname})" if args.mode == 'rel' else name),
                  fontsize=13, fontweight='bold')
     rects = [[0.04,0.52,0.42,0.42],[0.52,0.52,0.42,0.42],
              [0.04,0.04,0.42,0.42],[0.52,0.04,0.42,0.42]]
@@ -116,8 +129,8 @@ def main():
         ax = _make_ax(fig, rect)   # cartopy GeoAxes with WA extent
         v = _at_depth(data, z, zt)
         v_wa = v[wa]; v_sm = v_wa[sm]
-        if args.mode == 'rel':                 # dln vs the plotted nodes' mean at this depth
-            ref = np.nanmean(v_sm)
+        if args.mode == 'rel':                 # dln vs the plotted nodes' (or domain) mean
+            ref = np.nanmean(v[dom_nodes]) if dom_nodes is not None else np.nanmean(v_sm)
             v_wa = (v_wa / ref - 1.0) * 100.0; v_sm = (v_sm / ref - 1.0) * 100.0
             vmin, vmax = -clim_rel, clim_rel
             cmap = _cmap('RdBu', args.ncolors)

@@ -51,7 +51,8 @@ print(sys.argv[1].split('/')[-1], 'Xi', r('Xi'), 'Vpvs', r('Vpvs'))" $f; done
 | profile-location (index) map | `$FIG/<iter>/` | `xsection_index_map.png` (whole WA), `xsection_index_map.fp.png` (footprint) |
 | one section | `$FIG/<iter>/` | `xsection.<NS1…EW7>.png` |
 | stacked sections | `$FIG/<iter>/` | `xsection_stack.<field>.ns.png`, `.ew.png`; side by side: `xsection_stack.vsv_vpvs.ns.png` |
-| depth-slice maps | `$FIG/<iter>/` | `<iter>.<vsv|viso|xi|vpvs>.<abs|rel>.<fp|wa>.png` |
+| depth-slice maps | `$FIG/<iter>/` | `<iter>.<vsv|viso|xi|vpvs>.<abs|rel|rel-yilgarn>.<fp|wa>.png` |
+| domain 1-D profiles | `$FIG/domains/` | `domain_profiles.png` + `.<model>.txt/.npz` |
 | model vs model, sections | `$FIG/compare_<A>_<B>/` | `compare.<section>.png` |
 | model vs model, maps | `$FIG/compare_<A>_<B>/` | `compare.<vsv|xi>.<abs|rel>.<fp|wa>.png` |
 | regional 1-D profile | `$FIG/<iter>/` | `regional_profile.png` (+ `.txt` table) |
@@ -63,7 +64,8 @@ Every PNG has a `.pdf` beside it. `fp` = array-footprint view, `wa` = whole WA.
 - Absolute values: continuous **Spectral** (warm = slow). Relative values and xi: **RdBu** with a
   small white centre and gentle transition (`--div-gap 0.07 --div-white 2`). Vp/Vs: **viridis**.
 - 16 colour levels; cross-sections VE 3, depth 0–60 km.
-- Depth slices at **5 / 15 / 30 / 45 km** (not 40: Moho artefact).
+- Depth slices at **5 / 15 / 30 / 45 km** (not 40: Moho artefact; now the make_depth_maps default).
+- dln reference: whole-model mean at each depth by default; `--ref-domain yilgarn` = Yilgarn mean.
 - xi models: plot true Vsv with `--vel vsv_true` (Vsv = Viso / sqrt((2 + xi²)/3)).
 - Section strip: 10M tectonic units in the GSWA 2022 map colours + major crustal boundaries
   as down-arrows (thick = lithospheric, thin = crustal), names above.
@@ -191,6 +193,32 @@ python3 plotting/plot_regional_profile.py --fvs $FVS11 --second vpvs --moho $MOH
     --out $FIG/iter11/regional_profile.png                 # Vsv + Vp/Vs
 ```
 `--footprint` = nodes inside the array footprint only; `--spread pct` = percentile bands.
+
+---------------------------------------------------------------------------------------
+## 7b. Domain 1-D profiles and the Yilgarn reference
+Domains (Yilgarn, West Australian Craton, Perth Basin, Albany-Fraser, Capricorn) are sets of
+GSWA 10M units in `basemap/domains.csv` (add Canning, Kimberley, Pilbara ... by uncommenting a
+line). Nodes: inside the domain and Ndat >= 35 (`--footprint` = inside the array footprint too).
+```bash
+# representative profiles: Vsv / Viso / xi from iter8, Vsv / Vp/Vs from iter11
+python3 plotting/plot_domain_profiles.py --fvs $FVS8:iter8 $FVS11:iter11 --moho $MOHO \
+    --d-max 60 --out $FIG/domains/domain_profiles.png
+# -> domain_profiles.png/.pdf + domain_profiles.<model>.txt/.npz (mean, std, p16/50/84 per depth)
+python3 plotting/plot_domain_profiles.py --fvs $FVS10:iter10 $FVS2:iter2 \
+    --domains yilgarn perth albany_fraser --out $FIG/domains/vsv_iter10_iter2.png
+
+# dln relative to the Yilgarn mean at each depth (files tagged ref-yilgarn)
+python3 plotting/plot_xsection.py --fvs $FVS11 --load-sections $XS --stack dvsv,dvpvs \
+    --ref-domain yilgarn --out-dir $FIG/iter11        # xsection_stack.dvsv_dvpvs.ref-yilgarn.ns.png
+python3 plotting/plot_xsection.py --fvs $FVS8 --vel vsv_true --load-sections $XS --stack dvsv,dxi \
+    --ref-domain yilgarn --out-dir $FIG/iter8
+python3 plotting/make_depth_maps.py --fvs-zt $FVS8 --tag-zt iter8 --modes rel --ref-domain yilgarn \
+    --out-dir $FIG/iter8                               # iter8.vsv.rel-yilgarn.fp.png ...
+python3 plotting/make_depth_maps.py --fvs-z $FVS11 --tag-z iter11 --modes rel --ref-domain yilgarn \
+    --out-dir $FIG/iter11
+```
+`--ref-domain` works for single sections too (`xsection.<line>.ref-yilgarn.png`) and in
+`plot_vsv_tectonic.py`; any domain key from `domains.csv` can be the reference.
 
 ---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)
