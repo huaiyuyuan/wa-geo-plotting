@@ -171,6 +171,8 @@ def _great_circle_path(lat1, lon1, lat2, lon2, ds_deg=0.08):
 
 # ── Profile interpolation ─────────────────────────────────────────────────────
 _RBF_CACHE = []        # [(data3d, Lon, Lat, RBFInterpolator)] - same arrays, same fit
+MAX_NODE_DIST = 0.5   # deg: profile points further from any model node are left blank
+                      # (as the depth-slice maps; stops the fit extrapolating). 0 = off
 
 
 def _sample_profile(Lon, Lat, data3d, prof_lon, prof_lat):
@@ -209,12 +211,30 @@ def _sample_profile(Lon, Lat, data3d, prof_lon, prof_lat):
             # fine (we used all-finite rows); only redo columns that are all-nan.
             bad_cols = ~np.isfinite(out).any(axis=0)
             if not bad_cols.any():
-                return out
+                return _mask_far(out, Lon, Lat, data3d, prof_lon, prof_lat)
         except Exception:
             pass
 
     # Fallback: per-depth (only for columns not filled above)
-    from scipy.interpolate import griddata
+    return _mask_far(_sample_fallback(Lon, Lat, data3d, pts, qpts, out, nz), Lon, Lat, data3d,
+                     prof_lon, prof_lat)
+
+
+def _mask_far(out, Lon, Lat, data3d, prof_lon, prof_lat):
+    """Blank profile points more than MAX_NODE_DIST degrees from every node that has data."""
+    if not MAX_NODE_DIST:
+        return out
+    from scipy.spatial import cKDTree
+    has = np.isfinite(data3d).any(axis=1)
+    # plain degrees, exactly like the depth-slice maps (plot_depth_slice max_dist)
+    tree = cKDTree(np.column_stack([np.asarray(Lon)[has], np.asarray(Lat)[has]]))
+    dd, _ = tree.query(np.column_stack([np.asarray(prof_lon), np.asarray(prof_lat)]))
+    out[dd > MAX_NODE_DIST, :] = np.nan
+    return out
+
+
+def _sample_fallback(Lon, Lat, data3d, pts, qpts, out, nz):
+    from scipy.interpolate import griddata, RBFInterpolator
     todo = range(nz) if not np.isfinite(out).any() else np.where(~np.isfinite(out).any(axis=0))[0]
     for iz in todo:
         col = data3d[:, iz]; fin = np.isfinite(col)
@@ -989,9 +1009,9 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             'vsv':   (_cmap(CMAP_ABS, ncolors), f'{vname} (km/s)', 'both'),
             'dvsv':  (_cmap('RdBu', ncolors), f'd{vname} (%)', 'both'),
             'xi':    (_cmap('RdBu', ncolors), 'xi', 'both'),
-            'dxi':   (_cmap('RdBu', ncolors), f'dlnXi (%) vs {_xi_ref_label(xi_ref)}', 'both'),
+            'dxi':   (_cmap('RdBu', ncolors), 'dlnXi (%)', 'both'),
             'vpvs':  (_cmap(CMAP_VPVS, ncolors), 'Vp/Vs', 'both'),
-            'dvpvs': (_cmap('RdBu', ncolors), 'dln(Vp/Vs) (%) vs model mean at each depth', 'both'),
+            'dvpvs': (_cmap('RdBu', ncolors), 'dln(Vp/Vs) (%)', 'both'),
             'vdiff': (_cmap('RdBu', ncolors), f'{vname} vs {_REF["label"] if _REF else "ref"} (%)', 'both'),
         }.get(f, (_cmap('YlOrRd', ncolors), f'{vname} IQR/2', 'max'))
         st['name'] = {'vsv': vname, 'dvsv': f'd{vname}', 'dxi': 'dlnXi', 'xi': 'xi', 'vpvs': 'Vp/Vs',
@@ -1064,8 +1084,14 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     fig_w = left_in + ncol * pitch + 0.15 if ncol > 1 else page_w_in + 1.8
     fig=plt.figure(figsize=(fig_w,fig_h))
     names = ' | '.join(st['name'] for st in F)
+    rel = [st['f'] for st in F if st['f'] in ('dvsv', 'dvpvs', 'dxi')]
+    reftxt = ''
+    if rel:                             # what the relative fields are relative to
+        reftxt = ('\n' + ', '.join({'dvsv': f'd{vname}', 'dvpvs': 'dln(Vp/Vs)',
+                                    'dxi': 'dlnXi'}[f] for f in rel) + ' vs ' +
+                  (_xi_ref_label(xi_ref) if rel == ['dxi'] else 'model mean at each depth'))
     fig.suptitle(f'{names} — {group + " " if group else ""}{n} sections '
-                 f'[depth 0-{zbot:.0f} km, column width {maxd:.0f} km, VE {ve:.0f}x]',
+                 f'[depth 0-{zbot:.0f} km, column width {maxd:.0f} km, VE {ve:.0f}x]' + reftxt,
                  fontsize=11, fontweight='bold')
     rh=row_h_in/fig_h
     geo_res=[]
@@ -1085,9 +1111,10 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             ax.set_ylim(zbot,0); ax.set_xlim(0,p['dist'][-1])
             ax.set_ylabel('Depth',fontsize=7); ax.tick_params(labelsize=6)
             ax.set_xticks(np.arange(0,p['dist'][-1]+1,200))
-            ax.text(0.01,0.90,f"{p['lab']} [{p['dist'][-1]:.0f} km]",transform=ax.transAxes,
-                    fontsize=8,fontweight='bold',va='top',
-                    bbox=dict(fc='white',ec='none',alpha=0.7,pad=1))
+            # section name bottom-left, on an opaque white bar above the colours and Moho veil
+            ax.text(0.004, 0.03, f"{p['lab']} [{p['dist'][-1]:.0f} km]", transform=ax.transAxes,
+                    fontsize=8, fontweight='bold', ha='left', va='bottom', zorder=20,
+                    bbox=dict(fc='white', ec='none', alpha=1.0, pad=1.5))
             if p['moho'] is not None:
                 _draw_moho(ax, p['dist'], p['moho'], zbot, moho_mask, lw=0.9)
             if i==n-1: ax.set_xlabel('Distance (km)',fontsize=8)
@@ -1111,6 +1138,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
 
 
 def main():
+    global MAX_NODE_DIST
     ap = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fvs',     required=True)
@@ -1122,6 +1150,9 @@ def main():
                     help='Label for single section (default: section)')
     ap.add_argument('--sections', nargs='+', default=None,
                     help='Multiple sections: "lat1,lon1/lat2,lon2/label" ...')
+    ap.add_argument('--max-node-dist', type=float, default=MAX_NODE_DIST,
+                    help='blank section points further than this (deg) from any model node, '
+                         'as on the maps (default 0.5; 0 = no masking)')
     ap.add_argument('--ds',       type=float, default=0.08,
                     help='Sample spacing in degrees (default 0.08 ≈ 9 km)')
     ap.add_argument('--d-max',    type=float, default=60.0,
@@ -1251,6 +1282,7 @@ def main():
     ap.add_argument('--bnd-npz',   default=None, help='override crustal-boundaries npz')
     ap.add_argument('--out-dir',   default='figures/xsections')
     args = ap.parse_args()
+    MAX_NODE_DIST = args.max_node_dist
 
     global _GEO
     geo_args = None

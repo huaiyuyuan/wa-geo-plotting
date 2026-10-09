@@ -115,7 +115,8 @@ done
 Fields: `vsv dvsv xi dxi vpvs dvpvs vdiff err` (comma list = columns side by side).
 Add `--moho $MOHO` for the AR23 Moho (dashed) with a grey veil below (`--no-moho-mask` for the line only).
 Fix a colour range across runs: `--vmin 3.2 --vmax 4.0`. Taller/flatter rows: `--stack-ve 4`.
-All on one page: `--stack-split none`. Model minus reference: `--stack vdiff --ref-fvs $FVS2`.
+All on one page: `--stack-split none`. Points more than 0.5° from any model node are left blank
+(as on the maps): `--max-node-dist 0.5`, `0` = off. Model minus reference: `--stack vdiff --ref-fvs $FVS2`.
 
 ### 4b. One figure per section
 ```bash
@@ -235,6 +236,7 @@ git pull                                                   # update the repo
 | picker: `FigureCanvasAgg is non-interactive` | no display / toolkit: `ssh -Y`, or `conda install -n obspy tk` (or `tornado` for the browser picker) |
 | labels look wide | Arial Narrow / Liberation Sans Narrow not installed (falls back to DejaVu) |
 | `gm display: Unable to load font` | `gm display -font fixed file.png` or `eog file.png` |
+| section ends saturated at all depths | extrapolation beyond the model nodes: points > 0.5 deg from a node are now blank (`--max-node-dist`, 0 = off); check a line with `python3 tests/check_section_nodes.py $FVS11 $XS EW7 EW8` |
 
 ---------------------------------------------------------------------------------------
 ## 11. Credits for figure captions
