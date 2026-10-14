@@ -4,7 +4,7 @@ plot_site_columns.py - 'lithospheric columns' at the study sites: one vertical b
 site, coloured by velocity in fixed bins, depth down, site names on top in the terrane
 colours. Two sources:
 
-  TransD model (km scale): Vsv every 0.25 km/s from 2.5 to 4.5 (default), to 50 km
+  TransD model (km scale): Vsv every 0.25 km/s from 3.0 to 4.5 (default), to 50 km
     python3 plotting/plot_site_columns.py --fvs $FVS2 --moho $MOHO \\
         --out $FIG/iter2/sites/site_columns.iter2.png
   shallow station profiles (m scale, plot_site_shallow.py files): Vs in m/s, 250 m/s bins
@@ -32,7 +32,7 @@ sys.path.insert(0, _HERE)
 import tomo2d as t2                                           # noqa: E402
 from plot_site_profiles import sample, model_label, LABEL, gc_km   # noqa: E402
 
-DEFAULT_BINS = {'vsv': (2.5, 4.5, 0.25), 'viso': (2.5, 4.5, 0.25), 'xi': (0.9, 1.1, 0.025),
+DEFAULT_BINS = {'vsv': (3.0, 4.5, 0.25), 'viso': (3.0, 4.5, 0.25), 'xi': (0.9, 1.1, 0.025),
                 'vpvs': (1.65, 1.90, 0.025)}
 
 
@@ -100,7 +100,7 @@ def main():
     ap.add_argument('--shallow', default=None, help='folder or .zip of shallow station profiles instead of --fvs')
     ap.add_argument('--field', default='vsv', choices=list(LABEL))
     ap.add_argument('--bins', nargs=3, type=float, default=None, metavar=('LO', 'HI', 'STEP'),
-                    help='colour bins (default: model vsv 2.5 4.5 0.25; shallow: slowest value to the '
+                    help='colour bins (default: model vsv 3.0 4.5 0.25; shallow: slowest value to the '
                          '90th percentile of the profile maxima, 250 m/s steps)')
     ap.add_argument('--cmap', default=None, help="default turbo_r (warm = slow); RdBu for xi, viridis for Vp/Vs")
     ap.add_argument('--sites', default=os.path.join(_HERE, '..', 'examples', 'yilgarn_sites_19.txt'))

@@ -26,7 +26,9 @@ source /data/25/yuan/github/wa-geo-plotting/env_stage6.sh    # sets the variable
 | `FVS2` | `Fvs.iter.2.Z.npz` | Rayleigh-only Vsv, with Moho | fixed 1.73 |
 | `FVS8` | `Fvs.iter.8.ZT.npz` | **final radial anisotropy**: Vsv pinned to iter2, xi inverted; `Vsv` array = Viso → use `--vel vsv_true` | fixed 1.73 |
 | `FVS10` | `Fvs.iter.10.Z.npz` | Vsv, no Moho | fixed 1.73 |
-| `FVS11` | `Fvs.iter.11.Z.npz` | Vsv + **Vp/Vs inverted** | 1.668–1.881 |
+| `FVS11` | `Fvs.iter.11.Z.npz` | setup 4: Vsv + **Vp/Vs inverted**, Rayleigh only; `Vsv` is pure Vsv; band80, provisional | 1.668–1.881 |
+| `FVS12` | `Fvs.iter.12.ZT.npz` | Viso + xi (ZT); scripts derive Vsv = Viso/√((2+ξ²)/3) | fixed |
+| (v3) | band120, 25 km, 1682 nodes | final publication Vsv (queued); same keys, point `--fvs` at it | |
 | | `Fvs.iter.1/3/5/6.*` | earlier runs (iter3, iter6 superseded by iter8) | 5, 6 vary |
 
 Check what varies in any model:
@@ -320,7 +322,7 @@ python3 plotting/plot_site_shallow.py --dir <folder or station_files.zip> \
 #       .summary.txt (station, distance, Vs at 0/30/100 m, Vs30, max); flags station > 50 km, Vp/Vs files
 #    --slide (also for plot_site_profiles.py): 3 x 7 landscape panels for a 16:9 PowerPoint slide
 
-# 5. lithospheric columns: one bar per site coloured by Vsv in fixed bins (2.5-4.5 every 0.25), to 50 km
+# 5. lithospheric columns: one bar per site coloured by Vsv in fixed bins (3.0-4.5 every 0.25), to 50 km
 python3 plotting/plot_site_columns.py --fvs $FVS2 --moho $MOHO \
     --out $FIG/iter2/sites/site_columns.iter2.png
 #    shallow version (m, m/s; 250 m/s bins fitted to the profiles, to 650 m):

@@ -29,7 +29,9 @@ export FIG=${FIG:-$ST/figures}                    # one sub-folder per model: $F
 export FVS2=$ST/Fvs.iter.2.Z.npz                  # Rayleigh Vsv, with Moho (Vp/Vs fixed 1.73)
 export FVS8=$ST/Fvs.iter.8.ZT.npz                 # radial anisotropy: Vsv pinned to iter2, xi inverted
 export FVS10=$ST/Fvs.iter.10.Z.npz                # Vsv, no Moho
-export FVS11=$ST/Fvs.iter.11.Z.npz                # Vsv + Vp/Vs inverted (1.67-1.88)
+export FVS11=$ST/Fvs.iter.11.Z.npz                # setup 4: Vsv + Vp/Vs, Rayleigh only; band80, provisional
+export FVS12=$ST/Fvs.iter.12.ZT.npz               # Viso + xi (ZT); scripts derive Vsv = Viso/sqrt((2+xi^2)/3)
+# final publication Vsv: v3 (band120, 25 km, 1682 nodes) - same npz keys; add it here when it lands
 
 # surface-wave maps (v3b band120 iter-2): $V3B/{Z,T}/{group,phase}_v_tomo/TransD.region.*.npz
 # coverage mask: footprint npz key 'density' (config.FOOTPRINT_NPZ)
@@ -43,7 +45,7 @@ export SEC=$XS
 export FVS_Z=$FVS2
 export FVS_ZT=$FVS8
 
-for f in $FVS2 $FVS8 $FVS10 $FVS11 $XS $MOHO $WA_TECTONICS_NPZ $WA_BOUNDARIES_NPZ; do
+for f in $FVS2 $FVS8 $FVS10 $FVS11 $FVS12 $XS $MOHO $WA_TECTONICS_NPZ $WA_BOUNDARIES_NPZ; do
     [ -e "$f" ] || echo "env_stage6: missing $f"
 done
 cd $WGP
