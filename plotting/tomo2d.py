@@ -443,3 +443,54 @@ def domain_label_xy(D, key, grid=None):
             k = np.argmin((LON[inside] - cx) ** 2 + (LAT[inside] - cy) ** 2)
             return LON[inside][k], LAT[inside][k], 0.0
     return None
+
+
+# ----------------------------------------------------------------------------- sites
+# colours of the Yilgarn study-site map (terrane -> colour)
+TERRANE_COLOURS = {'narryer': '#762a83', 'youanmi': '#ff7f0e', 'kalgoorlie': '#2ca02c',
+                   'kurnalpi': '#9467bd', 'burtville': '#8c564b', 'south west': '#e377c2',
+                   'capricorn': '#17becf', 'pinjarra': '#bcbd22', 'albany-fraser': '#1f77b4'}
+
+
+def terrane_colour(t, i=0):
+    import matplotlib
+    c = TERRANE_COLOURS.get(str(t).replace('–', '-').strip().lower())
+    return c or matplotlib.colormaps['tab10'](i % 10)
+
+
+def load_sites(path):
+    """Study sites: '# Name Terrane LAT LONG' rows (tab, comma or spaces; the terrane may
+    contain spaces). -> list of dict(no, name, terrane, lat, lon) in file order."""
+    out = []
+    for line in open(path, encoding='utf-8'):
+        s = line.strip()
+        if not s or s.startswith('#') or s.lower().startswith(('name', 'no')):
+            continue
+        p = [x.strip() for x in (s.split('\t') if '\t' in s else s.split(',') if ',' in s else s.split())]
+        p = [x for x in p if x]
+        try:
+            lat, lon = float(p[-2]), float(p[-1])
+        except (ValueError, IndexError):
+            continue
+        if p[0].isdigit():
+            no, name, terr = int(p[0]), p[1], ' '.join(p[2:-2])
+        else:
+            no, name, terr = len(out) + 1, p[0], ' '.join(p[1:-2])
+        out.append(dict(no=no, name=name, terrane=terr or '-', lat=lat, lon=lon))
+    if not out:
+        raise ValueError(f"no sites read from {path}")
+    return out
+
+
+def sample_grid(lat, lon, g, plat, plon):
+    """Bilinear value of grid g [nlat, nlon] at points (NaNs filled from the nearest cell)."""
+    from scipy.interpolate import RegularGridInterpolator
+    f = RegularGridInterpolator((lat, lon), _fill_nan(np.asarray(g, float)),
+                                bounds_error=False, fill_value=np.nan)
+    return f(np.column_stack([plat, plon]))
+
+
+def nearest_cell(lat, lon, plat, plon):
+    i = np.clip(np.rint((np.asarray(plat) - lat[0]) / (lat[1] - lat[0])).astype(int), 0, len(lat) - 1)
+    j = np.clip(np.rint((np.asarray(plon) - lon[0]) / (lon[1] - lon[0])).astype(int), 0, len(lon) - 1)
+    return i, j

@@ -60,6 +60,9 @@ print(sys.argv[1].split('/')[-1], 'Xi', r('Xi'), 'Vpvs', r('Vpvs'))" $f; done
 | regional 1-D profile | `$FIG/<iter>/` | `regional_profile.png` (+ `.txt` table) |
 | v3b dispersion maps | `$FIG/v3b/maps/` | `v3b.<Z|T>.<phase|group>.<P>s.dv-wac.fp.png`, `...sheet...`, `v3b.captions.txt` |
 | v3b domain dispersion | `$FIG/v3b/` | `domain_dispersion.png/.pdf/.csv/.npz` |
+| site dispersion (19 sites) | `$FIG/v3b/sites/` | `site_dispersion.png`, `.overlay.png`, `.csv`, `.<set>.csv` |
+| site Vsv profiles | `$FIG/<iter>/sites/` | `site_vsv.<iter>.png`, `.overlay.png`, `.csv`, `.err.csv`, `.nodes.txt` |
+| domain Vsv (nine regions) | `$FIG/<iter>/domains/` | `domain_vsv.<iter>.png` + `.<iter>.txt/.npz` |
 
 Every PNG has a `.pdf` beside it. `fp` = array-footprint view, `wa` = whole WA.
 
@@ -265,6 +268,32 @@ python3 plotting/plot_domain_dispersion.py --root $V3B --out $FIG/v3b/domain_dis
 - Caption caveats (printed on the maps and in `v3b.captions.txt`): Z group 32–40 s low confidence
   (residual RMS 21–34 s); T group ~30–32 s low confidence; Z phase 52–60 s at the 50-cell floor
   (1.3–2.3k rays), smooth by construction; long-period group dropped (Z > 40 s, T > 32 s).
+
+---------------------------------------------------------------------------------------
+## 7d. Study sites (19 Yilgarn points) and domain Vsv profiles
+Sites: `examples/yilgarn_sites_19.txt` (no, name, terrane, lat, lon; tab/comma/space; any
+other site list in the same form works with `--sites`). Terrane colours follow the site map.
+```bash
+# 1. dispersion curves at the sites, from the v3b maps (bilinear; filled = inside the map mask)
+python3 plotting/plot_site_dispersion.py --root $V3B --sites examples/yilgarn_sites_19.txt \
+    --out $FIG/v3b/sites/site_dispersion.png
+#    -> site_dispersion.png (one panel per site), .overlay.png (per set, by terrane),
+#       .csv (long: site, set, period, v, std2, in_mask), .<Z|T>_<phase|group>.csv (period x site, NaN outside mask)
+
+# 2. iter2 Vsv at the sites (nearest node), values every 0.5 km to 70 km
+python3 plotting/plot_site_profiles.py --fvs $FVS2 --sites examples/yilgarn_sites_19.txt \
+    --moho $MOHO --z-max 70 --out $FIG/iter2/sites/site_vsv.iter2.png
+#    -> .png (one panel per site, +-1 posterior std, AR23 Moho tick), .overlay.png,
+#       .csv (depth x site), .err.csv (posterior std), .nodes.txt (node used, distance, Ndat, Moho)
+#    --idw 4: inverse-distance mean of the 4 nearest nodes; flags: node > 50 km or Ndat < 35
+
+# 3. iter2 Vsv domain means for the nine regions of the domain dispersion figure
+python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 --domains dispersion --fields vsv \
+    --coverage --rel-to wac --moho $MOHO --d-max 70 --out $FIG/iter2/domains/domain_vsv.iter2.png
+#    --domains dispersion = wac yilgarn pilbara capricorn albany_fraser perth canning officer eucla;
+#    --coverage = only nodes inside the v3b coverage mask (density >= 10), the cells of the curves;
+#    --rel-to wac adds a dVsv (%) panel; tables domain_vsv.iter2.iter2.txt/.npz (0.5 km steps)
+```
 
 ---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)

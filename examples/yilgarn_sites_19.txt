@@ -1,0 +1,20 @@
+#	Name	Terrane	LAT	LONG
+1	Narryer	Narryer	-26	116.5
+2	Murgoo	Youanmi	-27.6	116.2
+3	Cue	Youanmi	-28.15	118.27
+4	Sstone	Youanmi	-27.45	119.5
+5	Wiluna	Kalgoorlie	-26.6	120.44
+6	Laverton	Kurnalpi	-28.3	122
+7	Burtville	Burtville	-27.14	123
+8	Yalgoo	Youanmi	-28.6	116.8
+9	Karroun	Youanmi	-30	118.12
+10	Ftania	Youanmi	-32	120.17
+11	Kal	Kalgoorlie	-30.7	121.4
+12	Kurn	Kurnalpi	-30.3	122.1
+13	Btown	South West	-34	116
+14	Bodd	South West	-32.83	116.41
+15	CTZ	Youanmi	-32.5	118.27
+16	Nman	Kalgoorlie	-32	121.82
+17	CAO	Capricorn	-24.66	116.93
+18	PJO	Pinjarra	-29.3	115.13
+19	E-AFO	Albany-Fraser	-31.81	123.19

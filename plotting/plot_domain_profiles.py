@@ -29,6 +29,10 @@ for _p in (os.path.join(_HERE, '..', 'basemap'), os.path.join(_HERE, '..')):
         sys.path.insert(1, os.path.abspath(_p))
 from domains import Domains, model_fields                     # noqa: E402
 
+# the tectonic regions of the v3b domain dispersion curves (plot_domain_dispersion.py)
+DISPERSION_SET = ['wac', 'yilgarn', 'pilbara', 'capricorn', 'albany_fraser', 'perth',
+                  'canning', 'officer', 'eucla']
+
 FIELD_ORDER = ('vsv', 'viso', 'xi', 'vpvs')
 FIELD_LABEL = {'vsv': 'Vsv (km/s)', 'viso': 'Viso (km/s)', 'xi': 'xi = Vsh/Vsv', 'vpvs': 'Vp/Vs'}
 STYLES = ['-', '--', ':', '-.']
@@ -87,7 +91,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fvs', nargs='+', required=True, metavar='PATH[:LABEL]')
     ap.add_argument('--domains', nargs='+', default=None,
-                    help='domain keys from basemap/domains.csv (default: all listed there)')
+                    help="domain keys from basemap/domains.csv (default: the active ones; "
+                         "commented-out ones may be named too); 'dispersion' = the nine regions "
+                         "of plot_domain_dispersion.py")
     ap.add_argument('--fields', nargs='+', default=None, choices=FIELD_ORDER,
                     help='panels (default: every quantity any model carries)')
     ap.add_argument('--d-max', type=float, default=60.0)
@@ -97,12 +103,24 @@ def main():
     ap.add_argument('--tect-npz', default=None)
     ap.add_argument('--no-map', action='store_true')
     ap.add_argument('--footprint', action='store_true', help='only nodes inside the array footprint')
+    ap.add_argument('--coverage', action='store_true',
+                    help="only nodes inside the v3b coverage mask (footprint 'density' >= 10, holes "
+                         "filled, largest region) - the cells of the dispersion maps/curves")
+    ap.add_argument('--density-min', type=float, default=10.0)
+    ap.add_argument('--rel-to', default=None, metavar='DOMAIN',
+                    help='extra panel: d(first field) in %% relative to this domain mean (e.g. wac)')
     ap.add_argument('--footprint-npz', default=None)
     ap.add_argument('--footprint-outline', default=None)
     ap.add_argument('--out', default='figures/domains/domain_profiles.png')
     a = ap.parse_args()
 
     D = Domains(a.tect_npz)
+    if a.domains:
+        sys.path.insert(0, os.path.join(_HERE, '..', 'extract'))
+        from export_domains import all_definitions
+        D.defs = all_definitions(True)                # commented domains usable by name
+        if a.domains == ['dispersion']:
+            a.domains = DISPERSION_SET
     keys = a.domains or D.keys()
     for k in keys:
         D[k]                                          # unknown key -> clear error
@@ -110,6 +128,12 @@ def main():
     if a.footprint:
         from footprint import Footprint
         fp = Footprint(a.footprint_npz, a.footprint_outline)
+    cov = None
+    if a.coverage:
+        import tomo2d as t2
+        _fd = np.load(a.footprint_npz or t2._default_footprint(), allow_pickle=True)
+        _f, _la, _lo = t2._orient(None, _fd['lat2d'], _fd['lon2d'])
+        cov = (_la, _lo, t2.density_mask(_f(np.asarray(_fd['density'], float)), a.density_min))
 
     models, masks, prof, mohos = [], {}, {}, {}
     for spec in a.fvs:
@@ -123,6 +147,10 @@ def main():
         mh = moho_at(a.moho, d['Lon'], d['Lat']) if a.moho else None
         for k in keys:
             m = D.node_mask(d, k, a.min_ndat, fp)
+            if cov is not None:
+                import tomo2d as t2
+                ii, jj = t2.nearest_cell(cov[0], cov[1], d['Lat'], d['Lon'])
+                m &= cov[2][ii, jj]
             masks[(label, k)] = m
             print(f"   {D[k]['label']:<24s} {m.sum():5d} nodes")
             for f, A in F.items():
@@ -137,7 +165,8 @@ def main():
 
     # ---- figure: [map] + one panel per field ----
     nmap = 0 if a.no_map else 1
-    W = 3.3 * len(fields) + (4.6 if nmap else 0) + 0.6
+    npan = len(fields) + (1 if a.rel_to else 0)
+    W = 3.3 * npan + (4.6 if nmap else 0) + 0.6
     fig = plt.figure(figsize=(W, 6.8))
     x0 = 0.3
     tr = None
@@ -178,10 +207,29 @@ def main():
             ax.axvline(1.0, color='0.4', lw=0.8, ls='--')
         if j == 0:
             ax.set_ylabel('Depth (km)', fontsize=10)
+    if a.rel_to:                                      # d(field) vs the reference domain mean
+        f = fields[0]
+        ax = fig.add_axes([(x0 + 0.45 + 3.3 * len(fields)) / W, 0.10, 2.7 / W, 0.78])
+        for mi, (path, label, d, z, F) in enumerate(models):
+            ref = prof.get((label, a.rel_to, f))
+            if ref is None:
+                print(f"  (--rel-to {a.rel_to}: no nodes for {label})")
+                continue
+            for k in keys:
+                p = prof.get((label, k, f))
+                if p is not None:
+                    ax.plot(100 * (p['mean'] - ref['mean']) / ref['mean'], z, STYLES[mi % len(STYLES)],
+                            color=D[k]['colour'], lw=1.6)
+        ax.axvline(0, color='0.4', lw=0.8)
+        ax.set_ylim(models[0][3][-1], 0)
+        ax.set_xlabel(f"d{FIELD_LABEL[f].split(' (')[0]} vs {D[a.rel_to]['label']} (%)", fontsize=9)
+        ax.grid(alpha=0.25, lw=0.5); ax.tick_params(labelsize=8)
     # legend: domains (colour) + models (line style) + band meaning
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
-    h = [Line2D([], [], color=D[k]['colour'], lw=2, label=f"{D[k]['label']}") for k in keys]
+    h = [Line2D([], [], color=D[k]['colour'], lw=2,
+                label=f"{D[k]['label']} ({int(masks[(models[0][1], k)].sum())})") for k in keys
+         if masks[(models[0][1], k)].sum()]
     if len(models) > 1:
         h += [Line2D([], [], color='k', ls=STYLES[i % len(STYLES)], lw=1.4, label=m[1])
               for i, m in enumerate(models)]
@@ -191,8 +239,10 @@ def main():
         h.append(Line2D([], [], color='0.3', lw=3, label='AR23 Moho (domain mean)'))
     fig.legend(handles=h, loc='upper center', ncol=min(len(h), 6), fontsize=8,
                frameon=False, bbox_to_anchor=(0.5, 0.995))
-    fig.text(0.5, -0.01, 'Domain means over model nodes with Ndat >= %d%s; GSWA 1:10M tectonic '
-             'units (CC BY 4.0).' % (a.min_ndat, ', inside the array footprint' if fp else ''),
+    fig.text(0.5, -0.01, 'Domain means over model nodes (count in brackets) with Ndat >= %d%s%s; '
+             'GSWA 1:10M tectonic units (CC BY 4.0).' % (a.min_ndat, ', inside the array footprint' if fp else '',
+                                                         ', inside the v3b coverage mask (density >= %g)'
+                                                         % a.density_min if cov is not None else ''),
              ha='center', va='top', fontsize=7.5, color='0.3')
 
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)

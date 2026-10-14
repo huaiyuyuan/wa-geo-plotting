@@ -65,3 +65,16 @@ def test_albers_orientation_and_periods():
     assert t2.pick_periods(per, ['5', '60', '10']) == [1, 2]
     assert t2.pick_periods(per, ['all']) == list(range(5))
     assert t2.caveats_for('Z', 'group', 35) and not t2.caveats_for('Z', 'phase', 35)
+
+
+def test_load_sites_formats():
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, 's.txt')
+        open(p, 'w').write('#\tName\tTerrane\tLAT\tLONG\n13\tBtown\tSouth West\t-34\t116\n'
+                           '19 E-AFO Albany-Fraser -31.81 123.19\nKal,Kalgoorlie,-30.7,121.4\n')
+        s = t2.load_sites(p)
+        assert [x['name'] for x in s] == ['Btown', 'E-AFO', 'Kal']
+        assert s[0]['terrane'] == 'South West' and s[0]['no'] == 13 and s[1]['lon'] == 123.19
+        assert s[2]['terrane'] == 'Kalgoorlie' and s[2]['lat'] == -30.7
+        ex = os.path.join(os.path.dirname(__file__), '..', 'examples', 'yilgarn_sites_19.txt')
+        assert len(t2.load_sites(ex)) == 19
