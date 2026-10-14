@@ -47,18 +47,21 @@ def at_depth(A, z, zt):
     return np.array([np.interp(zt, z, row) for row in A])
 
 
-def grid_field(lon, lat, val, glon, glat, max_dist):
+def grid_fields(lon, lat, vals, glon, glat, max_dist):
+    """Thin-plate RBF of several fields at once (vals [nodes, nfield]) on the glat x glon grid:
+    one global solve shared by all depths (2-4x faster than a local fit per depth).
+    -> (grids [nfield, nlat, nlon], ok [nlat, nlon] = within max_dist deg of a node)"""
     from scipy.interpolate import RBFInterpolator
     from scipy.spatial import cKDTree
     c = np.cos(np.radians(np.mean(lat)))
-    ok = np.isfinite(val)
+    ok = np.all(np.isfinite(vals), axis=1)
     X = np.column_stack([lon[ok] * c, lat[ok]])
     GLO, GLA = np.meshgrid(glon, glat)
     Q = np.column_stack([GLO.ravel() * c, GLA.ravel()])
-    f = RBFInterpolator(X, val[ok], kernel='thin_plate_spline', neighbors=min(40, ok.sum()))
-    G = f(Q).reshape(GLO.shape)
+    nb = None if ok.sum() <= 4000 else 60
+    G = RBFInterpolator(X, vals[ok], kernel='thin_plate_spline', neighbors=nb)(Q)
     dist, _ = cKDTree(np.column_stack([lon[ok], lat[ok]])).query(np.column_stack([GLO.ravel(), GLA.ravel()]))
-    return G, (dist <= max_dist).reshape(GLO.shape)
+    return G.T.reshape(vals.shape[1], *GLO.shape), (dist <= max_dist).reshape(GLO.shape)
 
 
 def main():
@@ -80,6 +83,7 @@ def main():
                     help='colour limits per depth: lo1 hi1 lo2 hi2 ... (abs) or L1 L2 ... (--rel, +-L)')
     ap.add_argument('--extent', default='nodes', help="nodes (model nodes +0.5 deg) | wa | 'lon0,lon1,lat0,lat1'")
     ap.add_argument('--grat', type=float, default=None)
+    ap.add_argument('--dgrid', type=float, default=0.05, help='map grid step (deg); 0.1 = 4x fewer cells')
     ap.add_argument('--tect-npz', default=None)
     ap.add_argument('--no-units', action='store_true', help='no 10M tectonic unit outlines')
     ap.add_argument('--no-labels', action='store_true', help='no site numbers')
@@ -108,7 +112,7 @@ def main():
         ext = [112.0, 129.6, -35.8, -13.2]
     else:
         ext = [float(x) for x in a.extent.split(',')]
-    glon = np.arange(ext[0], ext[1] + 1e-6, 0.05); glat = np.arange(ext[2], ext[3] + 1e-6, 0.05)
+    glon = np.arange(ext[0], ext[1] + 1e-6, a.dgrid); glat = np.arange(ext[2], ext[3] + 1e-6, a.dgrid)
     cov = None
     if a.coverage != 'none':
         try:
@@ -162,13 +166,20 @@ def main():
             cmap = pds._cmap('RdBu', 16)
         except Exception:
             pass
+    import time
     for r, m in enumerate(models):
+        t0 = time.time()
+        Gall, ok_all = grid_fields(m['lon'], m['lat'],
+                                   np.column_stack([V[(m['label'], zt)] for zt in a.depths]),
+                                   glon, glat, a.max_dist)
+        print(f"  {m['label']}: interpolated {len(a.depths)} depths on {len(glat)}x{len(glon)} cells "
+              f"in {time.time() - t0:.1f} s")
         for j, zt in enumerate(a.depths):
             x0 = 0.45 + j * (w + 0.25)
             y0 = H - 0.55 - (r + 1) * (w * asp + 0.6) + 0.3
             ax = fig.add_axes([x0 / W, y0 / H, w / W, w * asp / H])
             F = t2.MapFrame(ax, ext, grat=a.grat)
-            G, ok = grid_field(m['lon'], m['lat'], V[(m['label'], zt)], glon, glat, a.max_dist)
+            G, ok = Gall[j], ok_all.copy()
             if cov is not None and a.coverage == 'blank':
                 ok &= cov
             norm = Normalize(*lims[j])

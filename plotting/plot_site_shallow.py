@@ -48,8 +48,21 @@ def vs30(z, v):
 
 
 def load_dir(d):
+    """Profiles from a folder (searched recursively) or straight from a .zip of the .dat files."""
+    import zipfile, tempfile
+    if os.path.isfile(d) and zipfile.is_zipfile(d):
+        tmp = tempfile.mkdtemp(prefix='shallow_')
+        with zipfile.ZipFile(d) as z:
+            z.extractall(tmp)
+        d = tmp
+    if not os.path.isdir(d):
+        sys.exit(f"--dir {d}: no such folder or zip file")
+    files = sorted(glob.glob(os.path.join(d, '**', '*.dat'), recursive=True))
+    if not files:
+        sys.exit(f"no .dat files under {d} (give the folder holding "
+                 f"<no>_<name>_median_vs_station_<sta>.dat, or the .zip itself)")
     out = {}
-    for f in sorted(glob.glob(os.path.join(d, '*.dat'))):
+    for f in files:
         m = PAT.match(os.path.basename(f))
         if not m:
             print(f"  (skipped {os.path.basename(f)}: name not <no>_<name>_median_<vs|vpvs>_station_<sta>.dat)")
@@ -58,12 +71,14 @@ def load_dir(d):
         o = np.argsort(a[:, 2])
         out[int(m.group(1))] = dict(file=os.path.basename(f), name=m.group(2), kind=m.group(3).lower(),
                                     sta=m.group(4), lon=a[0, 0], lat=a[0, 1], z=a[o, 2], v=a[o, 3])
+    print(f"{len(out)} profiles from {len(files)} .dat files under {d}")
     return out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--dir', required=True, help='folder with the <no>_<name>_median_vs_station_<sta>.dat files')
+    ap.add_argument('--dir', required=True,
+                    help='folder (searched recursively) or .zip with the <no>_<name>_median_vs_station_<sta>.dat files')
     ap.add_argument('--sites', default=os.path.join(_HERE, '..', 'examples', 'yilgarn_sites_19.txt'))
     ap.add_argument('--max-km', type=float, default=50.0, help='flag stations further than this from the site')
     ap.add_argument('--zmax', type=float, default=None, help='common depth limit (m); default each panel its own')
@@ -71,8 +86,13 @@ def main():
     ap.add_argument('--overlay-zmax', type=float, default=400.0)
     ap.add_argument('--dz', type=float, default=1.0, help='depth step of the csv table (m)')
     ap.add_argument('--ncol', type=int, default=5)
+    ap.add_argument('--panel-h', type=float, default=3.0, help='panel height (in); width is 2.15 in')
+    ap.add_argument('--slide', action='store_true',
+                    help='landscape 3 x 7 layout for a 16:9 slide (= --ncol 7 --panel-h 2.75)')
     ap.add_argument('--out', default='figures/sites/site_shallow_vs.png')
     a = ap.parse_args()
+    if a.slide:
+        a.ncol, a.panel_h = 7, 2.75
 
     sites = t2.load_sites(a.sites)
     P = load_dir(a.dir)
@@ -95,10 +115,12 @@ def main():
         print(f"  {s['no']:2d} {s['name']:<10s} {p['sta']:<6s} {p['dist']:6.1f} km  0-{p['z'].max():g} m  "
               + (f"Vs30 {p['vs30']:.0f} m/s" if np.isfinite(p['vs30']) else '') + (f"  ** {p['flag']}" if flags else ''))
     vsv = [p for p in P.values() if p['kind'] == 'vs']
+    if not vsv:
+        sys.exit('no Vs profiles matched the sites (check the <no>_ prefix of the file names)')
     xl = a.xlim or (0, 500 * np.ceil(max(p['v'].max() for p in vsv) / 500))
 
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
-    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, 3.0 * nr + 0.5), squeeze=False)
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]
         col = t2.terrane_colour(s['terrane'], k)

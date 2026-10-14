@@ -143,6 +143,9 @@ def main():
     ap.add_argument('--moho', default=os.environ.get('MOHO'), help='AR23 Moho file (tick on each panel)')
     ap.add_argument('--xlim', nargs=2, type=float, default=None)
     ap.add_argument('--ncol', type=int, default=5)
+    ap.add_argument('--panel-h', type=float, default=3.0, help='panel height (in); width is 2.15 in')
+    ap.add_argument('--slide', action='store_true',
+                    help='landscape 3 x 7 layout for a 16:9 slide (= --ncol 7 --panel-h 2.75)')
     ap.add_argument('--ref-domain', default=None, metavar='DOMAIN',
                     help='also plot each site as d(field) %% from this domain mean (e.g. yilgarn): '
                          'mean over the model nodes in the domain with Ndat >= --min-ndat')
@@ -152,6 +155,8 @@ def main():
     ap.add_argument('--dlim', type=float, default=None, help='+- x limit (%%) of the --ref-domain figure')
     ap.add_argument('--out', default='figures/sites/site_vsv.png')
     a = ap.parse_args()
+    if a.slide:
+        a.ncol, a.panel_h = 7, 2.75
     if not a.fvs:
         sys.exit('give --fvs (or source env_stage6.sh for $FVS2)')
 
@@ -181,7 +186,7 @@ def main():
     xl = a.xlim or (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5)
 
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
-    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, 3.0 * nr + 0.5), sharex=True, sharey=True,
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=True, sharey=True,
                             squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]
@@ -303,7 +308,7 @@ def ref_figures(a, sites, zq, models, stem, how, wide):
     L = a.dlim or max(2.0, np.ceil(np.nanpercentile(np.abs(allv), 99)))
     fld = LABEL[a.field].split(' (')[0]
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
-    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, 3.0 * nr + 0.5), sharex=True, sharey=True,
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=True, sharey=True,
                             squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]

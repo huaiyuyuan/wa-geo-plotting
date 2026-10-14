@@ -314,10 +314,11 @@ python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 --domains dispersion 
 
 # 4. shallow Vs (top ~0.1-2 km) at the sites, from the station median profiles
 #    (<no>_<name>_median_vs_station_<STA>.dat: lon lat depth_m Vs_m/s), same panel layout
-python3 plotting/plot_site_shallow.py --dir <folder with the .dat files> \
+python3 plotting/plot_site_shallow.py --dir <folder or station_files.zip> \
     --out $FIG/sites/site_shallow_vs.png
 #    -> .png (own depth scale per panel; --zmax 300 for a common one), .overlay.png, .csv (1 m steps),
 #       .summary.txt (station, distance, Vs at 0/30/100 m, Vs30, max); flags station > 50 km, Vp/Vs files
+#    --slide (also for plot_site_profiles.py): 3 x 7 landscape panels for a 16:9 PowerPoint slide
 ```
 
 ---------------------------------------------------------------------------------------
