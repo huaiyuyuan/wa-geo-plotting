@@ -136,9 +136,13 @@ def main():
             lims.append((-L, L))
         elif a.vlim and len(a.vlim) >= 2 * (j + 1):
             lims.append((a.vlim[2 * j], a.vlim[2 * j + 1]))
+        elif a.field == 'xi':                          # diverging around 1.0
+            d = max(0.01, np.ceil(np.nanpercentile(np.abs(allv - 1.0), 98) * 100) / 100)
+            lims.append((1.0 - d, 1.0 + d))
         else:
             lo_, hi_ = np.nanpercentile(allv, [2, 98])
-            lims.append((np.floor(lo_ * 20) / 20, np.ceil(hi_ * 20) / 20))
+            q = 100 if a.field == 'vpvs' else 20
+            lims.append((np.floor(lo_ * q) / q, np.ceil(hi_ * q) / q))
 
     rings = []
     if not a.no_units:
@@ -159,8 +163,10 @@ def main():
     extra = 0.22 * (int(np.ceil(nterr / lcol)) - 1)       # legend rows below the colour bars
     H = nr * (w * asp + 0.6) + 1.6 + extra
     fig = plt.figure(figsize=(W, H))
-    cmap = (plt.get_cmap('RdBu') if a.rel else matplotlib.colormaps['Spectral'])
-    if a.rel:
+    # house rules: absolute velocity Spectral (warm = slow); xi and relative RdBu with a white
+    # centre; Vp/Vs viridis
+    cmap = {'vpvs': matplotlib.colormaps['viridis']}.get(a.field, matplotlib.colormaps['Spectral'])
+    if a.rel or a.field == 'xi':
         try:
             import plot_depth_slice as pds
             cmap = pds._cmap('RdBu', 16)
@@ -202,7 +208,9 @@ def main():
                 cax = fig.add_axes([(x0 + 0.12 * w) / W, (y0 - 0.62) / H, 0.76 * w / W, 0.1 / H])
                 cb = plt.colorbar(pm, cax=cax, orientation='horizontal', extend='both')
                 cb.ax.tick_params(labelsize=7)
-                cb.set_label(f"d{LABEL[a.field]} (%) vs model mean at {zt:g} km" if a.rel else f"{LABEL[a.field]} (km/s) at {zt:g} km",
+                unit = ' (km/s)' if a.field in ('vsv', 'viso') else ''
+                cb.set_label(f"d{LABEL[a.field]} (%) vs model mean at {zt:g} km" if a.rel
+                             else f"{LABEL[a.field]}{unit} at {zt:g} km",
                              fontsize=7.5)
     terr = []
     for k, s in enumerate(sites):

@@ -212,12 +212,14 @@ def main():
                 + (f" / {M2['info'][k]['dist']:.0f} km" if M2 and abs(M2['info'][k]['dist'] - info[k]['dist']) > 0.5
                    else '') + (f"\n{flags}" if flags else ''),
                 transform=ax.transAxes, fontsize=6.3, va='bottom', color='#b03a2e' if flags else '0.35')
+        if a.field == 'xi':
+            ax.axvline(1.0, color='0.4', lw=0.7, ls='--')
         ax.grid(True, lw=0.3, color='0.85'); ax.tick_params(labelsize=7)
     for ax in list(axs.flat)[ns:]:
         ax.axis('off')
     if ns < nr * nc:                                  # legend in the first empty slot
         lax = list(axs.flat)[ns]
-        h = [Line2D([], [], color='0.3', lw=1.5, label=f"{M1['label']} (terrane colour, ±1σ band)")]
+        h = [Line2D([], [], color='0.3', lw=1.5, label=f"{M1['label']} (terrane colour" + (", ±1σ band)" if M1['Pe'] is not None else ")"))]
         if M2 is not None:
             h.append(Line2D([], [], color='k', lw=1.0, ls='--', label=f"{M2['label']} (grey band)"))
         if moho is not None:
@@ -238,7 +240,7 @@ def main():
     how = (f'inverse-distance mean of {a.idw} nearest nodes' if a.idw > 1 else 'nearest model node')
     fld = LABEL[a.field].split(' (')[0]
     fig.suptitle(f"{M1['label']}" + (f" (solid) vs {M2['label']} (dashed)" if M2 else '')
-                 + f" {fld} at the study sites ({how}; band: ±1 posterior std"
+                 + f" {fld} at the study sites ({how}" + ("; band: ±1 posterior std" if M1['Pe'] is not None else '')
                  + ('; black tick: AR23 Moho' if moho is not None else '') + ')', fontsize=10.5)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
