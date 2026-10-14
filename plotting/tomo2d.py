@@ -355,6 +355,16 @@ class MapFrame:
         return self.ax.pcolormesh(X, Y, np.ma.masked_where(~m, z), cmap=cmap, norm=norm,
                                   shading='flat', zorder=zorder, rasterized=True)
 
+    def veil(self, lat, lon, inside, colour='white', alpha=0.6, zorder=4):
+        """Fade everything outside `inside` (bool grid on lat/lon centres) - e.g. the area
+        outside the coverage mask; the sea stays as drawn."""
+        from matplotlib.colors import ListedColormap
+        LO, LA = np.meshgrid(edges(lon), edges(lat))
+        X, Y = self.xy(LO, LA)
+        return self.ax.pcolormesh(X, Y, np.ma.masked_where(inside, np.ones(inside.shape)),
+                                  cmap=ListedColormap([colour]), alpha=alpha, shading='flat',
+                                  zorder=zorder, rasterized=True)
+
     def outline(self, lat, lon, m, zorder=5, **kw):
         """Edge of a boolean grid mask (0.5 contour, padded so it closes)."""
         la = np.r_[2 * lat[0] - lat[1], lat, 2 * lat[-1] - lat[-2]]

@@ -12,7 +12,8 @@ One row per model, one column per depth; each depth column shares one colour sca
 (Spectral, warm = slow; 2-98th percentile of the nodes of all models at that depth, or
 --vlim per depth). Nodes with Ndat >= --min-ndat are interpolated (thin-plate RBF, 0.05 deg
 grid) and cells further than --max-dist deg (0.5) from a node are blank, as in the other
-maps; --coverage also blanks cells outside the v3b coverage mask (density >= 10).
+maps. The area outside the v3b coverage mask (density >= 10) is faded with a white veil
+and its edge dashed (--coverage blank: no colour there; none: ignore).
 --rel shows dVsv (%) relative to each model's own mean at that depth (RdBu, white centre).
 """
 import argparse, os, re, sys
@@ -69,7 +70,11 @@ def main():
     ap.add_argument('--sites', default=os.path.join(_HERE, '..', 'examples', 'yilgarn_sites_19.txt'))
     ap.add_argument('--min-ndat', type=int, default=35)
     ap.add_argument('--max-dist', type=float, default=0.5, help='blank cells further than this (deg) from a node')
-    ap.add_argument('--coverage', action='store_true', help='also blank cells outside the v3b coverage mask')
+    ap.add_argument('--coverage', default='veil', choices=['veil', 'blank', 'none'],
+                    help='v3b coverage mask (density >= 10): veil = fade the area outside it (default), '
+                         'blank = no colour outside it, none = ignore')
+    ap.add_argument('--veil-alpha', type=float, default=0.6)
+    ap.add_argument('--veil-colour', default='white')
     ap.add_argument('--footprint', default=None)
     ap.add_argument('--vlim', nargs='+', type=float, default=None,
                     help='colour limits per depth: lo1 hi1 lo2 hi2 ... (abs) or L1 L2 ... (--rel, +-L)')
@@ -105,8 +110,11 @@ def main():
         ext = [float(x) for x in a.extent.split(',')]
     glon = np.arange(ext[0], ext[1] + 1e-6, 0.05); glat = np.arange(ext[2], ext[3] + 1e-6, 0.05)
     cov = None
-    if a.coverage:
-        cov, _ = t2.load_coverage(glat, glon, a.footprint)
+    if a.coverage != 'none':
+        try:
+            cov, _ = t2.load_coverage(glat, glon, a.footprint)
+        except Exception as e:
+            print(f"  (no coverage mask: {e})")
 
     # values at depth + colour limits per depth
     V = {}
@@ -161,10 +169,13 @@ def main():
             ax = fig.add_axes([x0 / W, y0 / H, w / W, w * asp / H])
             F = t2.MapFrame(ax, ext, grat=a.grat)
             G, ok = grid_field(m['lon'], m['lat'], V[(m['label'], zt)], glon, glat, a.max_dist)
-            if cov is not None:
+            if cov is not None and a.coverage == 'blank':
                 ok &= cov
             norm = Normalize(*lims[j])
             pm = F.raster(glat, glon, G, ok, cmap, norm)
+            if cov is not None and a.coverage == 'veil':
+                F.veil(glat, glon, cov, colour=a.veil_colour, alpha=a.veil_alpha, zorder=3)
+                F.outline(glat, glon, cov, zorder=4, colors='0.25', linewidths=0.7, linestyles='--')
             if rings:
                 F.lines(rings, colors='0.2', linewidths=0.3, zorder=5)
             x, y = F.xy(slon, slat)

@@ -299,14 +299,25 @@ python3 plotting/plot_site_profiles.py --fvs $FVS2 --fvs2 $FVS10 --moho $MOHO --
 python3 plotting/plot_site_depth_maps.py --fvs $FVS2:iter2 $FVS10:iter10 --depths 5 20 35 45 \
     --out $FIG/sites/site_depth_maps.iter2_iter10.png
 #    each depth column shares one Spectral scale; --rel = dVsv % vs each model's mean at that depth;
-#    --coverage blanks cells outside the v3b coverage mask; --extent wa for the whole state
+#    outside the v3b coverage mask is faded (white veil, dashed edge; --veil-alpha 0.6,
+#    --coverage blank = no colour there, none = off); --extent wa for the whole state
 
 # 3. iter2 Vsv domain means for the nine regions of the domain dispersion figure
 python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 --domains dispersion --fields vsv \
-    --coverage --rel-to wac --moho $MOHO --d-max 70 --out $FIG/iter2/domains/domain_vsv.iter2.png
+    --coverage --rel-to wac --sites examples/yilgarn_sites_19.txt --moho $MOHO --d-max 60 \
+    --out $FIG/iter2/domains/domain_vsv.iter2.png
 #    --domains dispersion = wac yilgarn pilbara capricorn albany_fraser perth canning officer eucla;
 #    --coverage = only nodes inside the v3b coverage mask (density >= 10), the cells of the curves;
 #    --rel-to wac adds a dVsv (%) panel; tables domain_vsv.iter2.iter2.txt/.npz (0.5 km steps)
+#    --sites examples/yilgarn_sites_19.txt marks the 19 sites on the map; with --coverage the land
+#    outside the coverage mask is faded (--no-veil to switch off, --veil-alpha, --veil-colour 0.7)
+
+# 4. shallow Vs (top ~0.1-2 km) at the sites, from the station median profiles
+#    (<no>_<name>_median_vs_station_<STA>.dat: lon lat depth_m Vs_m/s), same panel layout
+python3 plotting/plot_site_shallow.py --dir <folder with the .dat files> \
+    --out $FIG/sites/site_shallow_vs.png
+#    -> .png (own depth scale per panel; --zmax 300 for a common one), .overlay.png, .csv (1 m steps),
+#       .summary.txt (station, distance, Vs at 0/30/100 m, Vs30, max); flags station > 50 km, Vp/Vs files
 ```
 
 ---------------------------------------------------------------------------------------

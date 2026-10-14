@@ -62,8 +62,9 @@ def moho_at(path, lon, lat):
     return np.array([float(np.ravel(f(a, o))[0]) for a, o in zip(lat, lon)])
 
 
-def draw_map(ax, D, keys, models, masks, tr):
+def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.6, veil_colour='white'):
     from plot_depth_slice import _add_states_ocean
+    import tomo2d as t2
     for k in keys:                                   # unit outlines, filled faintly
         col = D[k]['colour']
         for unit, idx in D.unit_rings(k).items():
@@ -79,6 +80,25 @@ def draw_map(ax, D, keys, models, masks, tr):
     for k in sorted(keys, key=lambda k: -masks[(models[0][1], k)].sum()):   # big first
         m = masks[(models[0][1], k)]
         ax.scatter(lon[m], lat[m], s=5, c=D[k]['colour'], lw=0, zorder=4, **kw)
+    if cov is not None:                              # fade the land outside the coverage mask
+        from matplotlib.colors import ListedColormap
+        la, lo, cm = cov
+        ax.pcolormesh(t2.edges(lo), t2.edges(la), np.ma.masked_where(cm, np.ones(cm.shape)),
+                      cmap=ListedColormap([veil_colour]), alpha=veil_alpha, shading='flat',
+                      zorder=3.5, rasterized=True, **kw)
+        LO, LA = np.meshgrid(np.r_[2 * lo[0] - lo[1], lo, 2 * lo[-1] - lo[-2]],
+                             np.r_[2 * la[0] - la[1], la, 2 * la[-1] - la[-2]])
+        ax.contour(LO, LA, np.pad(cm.astype(float), 1), levels=[0.5], colors='0.25',
+                   linewidths=0.8, linestyles='--', zorder=4.5, **kw)
+    if sites:
+        import matplotlib.patheffects as pe
+        xyc = tr._as_mpl_transform(ax) if tr is not None else 'data'
+        for k, st in enumerate(sites):
+            ax.scatter([st['lon']], [st['lat']], marker='^', s=42, c=[t2.terrane_colour(st['terrane'], k)],
+                       edgecolors='k', linewidths=0.6, zorder=8, **kw)
+            ax.annotate(str(st['no']), (st['lon'], st['lat']), xycoords=xyc, xytext=(3.5, 2.5),
+                        textcoords='offset points', fontsize=6.3, fontweight='bold', zorder=9,
+                        path_effects=[pe.withStroke(linewidth=1.6, foreground='w')])
     _add_states_ocean(ax, ocean='white', states='#e8e8e8')
     if tr is not None:
         ax.set_extent([112.5, 129.5, -35.8, -13.5], crs=tr)
@@ -107,6 +127,11 @@ def main():
                     help="only nodes inside the v3b coverage mask (footprint 'density' >= 10, holes "
                          "filled, largest region) - the cells of the dispersion maps/curves")
     ap.add_argument('--density-min', type=float, default=10.0)
+    ap.add_argument('--no-veil', action='store_true',
+                    help='with --coverage: do not fade the map outside the coverage mask')
+    ap.add_argument('--veil-alpha', type=float, default=0.6)
+    ap.add_argument('--veil-colour', default='white')
+    ap.add_argument('--sites', default=None, help='study sites to mark on the map (e.g. examples/yilgarn_sites_19.txt)')
     ap.add_argument('--rel-to', default=None, metavar='DOMAIN',
                     help='extra panel: d(first field) in %% relative to this domain mean (e.g. wac)')
     ap.add_argument('--footprint-npz', default=None)
@@ -177,7 +202,12 @@ def main():
             axm = fig.add_axes([x0 / W, 0.10, 4.2 / W, 0.78], projection=tr)
         except Exception:
             axm = fig.add_axes([x0 / W, 0.10, 4.2 / W, 0.78])
-        draw_map(axm, D, keys, models, masks, tr)
+        sites = None
+        if a.sites:
+            import tomo2d as t2
+            sites = t2.load_sites(a.sites)
+        draw_map(axm, D, keys, models, masks, tr, cov=cov if not a.no_veil else None, sites=sites,
+                 veil_alpha=a.veil_alpha, veil_colour=a.veil_colour)
         x0 += 4.6
     axes = []
     for j, f in enumerate(fields):
