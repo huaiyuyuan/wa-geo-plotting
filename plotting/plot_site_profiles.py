@@ -145,7 +145,8 @@ def main():
     ap.add_argument('--ncol', type=int, default=5)
     ap.add_argument('--panel-h', type=float, default=3.0, help='panel height (in); width is 2.15 in')
     ap.add_argument('--slide', action='store_true',
-                    help='landscape 3 x 7 layout for a 16:9 slide (= --ncol 7 --panel-h 2.75)')
+                    help='landscape 3 x 7 layout for a 16:9 slide (= --ncol 7 --panel-h 2.75), '
+                         'axis labels on every panel (as plot_site_shallow.py --slide)')
     ap.add_argument('--ref-domain', default=None, metavar='DOMAIN',
                     help='also plot each site as d(field) %% from this domain mean (e.g. yilgarn): '
                          'mean over the model nodes in the domain with Ndat >= --min-ndat')
@@ -186,7 +187,7 @@ def main():
     xl = a.xlim or (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5)
 
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
-    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=True, sharey=True,
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=not a.slide, sharey=not a.slide,
                             squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]
@@ -223,7 +224,10 @@ def main():
             h.append(Line2D([], [], color='k', lw=2.2, label='AR23 Moho'))
         lax.legend(handles=h, loc='upper left', fontsize=7.5, frameon=False)
     ax0 = axs.flat[0]
-    ax0.set_ylim(a.z_max, 0); ax0.set_xlim(*xl)
+    for ax in list(axs.flat)[:ns]:                    # (shared unless --slide)
+        ax.set_ylim(a.z_max, 0); ax.set_xlim(*xl)
+        if a.slide:
+            ax.set_xlabel(LABEL[a.field], fontsize=7.5)
     for ax in axs[:, 0]:
         ax.set_ylabel('depth (km)', fontsize=8)
     for c in range(nc):
@@ -308,7 +312,7 @@ def ref_figures(a, sites, zq, models, stem, how, wide):
     L = a.dlim or max(2.0, np.ceil(np.nanpercentile(np.abs(allv), 99)))
     fld = LABEL[a.field].split(' (')[0]
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
-    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=True, sharey=True,
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=not a.slide, sharey=not a.slide,
                             squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]
@@ -339,7 +343,10 @@ def ref_figures(a, sites, zq, models, stem, how, wide):
         if np.isfinite(M1['info'][0]['moho']):
             h.append(Line2D([], [], color='k', lw=2.2, label='AR23 Moho'))
         lax.legend(handles=h, loc='upper left', fontsize=7.2, frameon=False)
-    axs.flat[0].set_ylim(a.z_max, 0); axs.flat[0].set_xlim(-L, L)
+    for ax in list(axs.flat)[:ns]:
+        ax.set_ylim(a.z_max, 0); ax.set_xlim(-L, L)
+        if a.slide:
+            ax.set_xlabel(f"d{fld} (%) from {key} mean", fontsize=7.5)
     for ax in axs[:, 0]:
         ax.set_ylabel('depth (km)', fontsize=8)
     for c in range(nc):
