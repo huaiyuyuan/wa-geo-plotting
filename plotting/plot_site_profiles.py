@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 plot_site_profiles.py - TransD 1-D Vsv profiles at study sites (e.g. the 19 Yilgarn sites
-of examples/yilgarn_sites_19.txt), with values every 0.5 km to 70 km.
+of examples/yilgarn_sites_19.txt), with values every 0.5 km to 70 km; optionally a second
+model drawn on top (e.g. iter2 with a Moho vs iter10 without one).
 
   source env_stage6.sh
-  python3 plotting/plot_site_profiles.py --fvs $FVS2 --sites examples/yilgarn_sites_19.txt \\
-      --moho $MOHO --out $FIG/iter2/sites/site_vsv.png
+  python3 plotting/plot_site_profiles.py --fvs $FVS2 --fvs2 $FVS10 \\
+      --sites examples/yilgarn_sites_19.txt --moho $MOHO --out $FIG/sites/site_vsv.iter2_iter10.png
 
 Profile at a site = the model node nearest the site (great-circle distance; printed and
 written to the tables), or with --idw K the inverse-distance mean of the K nearest nodes
@@ -13,15 +14,16 @@ within --max-km. Sites whose nearest node is beyond --max-km (default 50) or has
 Ndat < --min-ndat (35) are flagged. xi (ZT) models give true Vsv (Viso / sqrt((2+xi^2)/3));
 --field viso / xi / vpvs for the other quantities.
 
-Outputs
-  <out>               one panel per site: profile, +-1 posterior std band (Vsv_err), AR23
-                      Moho tick (--moho)
-  <stem>.overlay.png  all sites in one panel, coloured by terrane
-  <stem>.csv          depth (0, 0.5 ... --z-max) x site, km/s
-  <stem>.err.csv      same for the posterior std (when the model has Vsv_err)
-  <stem>.nodes.txt    the node used for each site: lon, lat, distance, Ndat, AR23 Moho
+Outputs (per model <label>, e.g. iter2, iter10)
+  <out>                     one panel per site: --fvs in the terrane colour with +-1 posterior
+                            std band; --fvs2 black dashed (band grey); AR23 Moho tick (--moho)
+  <stem>.overlay.png        all sites in one panel, coloured by terrane (--fvs2 as a 2nd panel)
+  <stem>.<label>.csv        depth (0, 0.5 ... --z-max) x site, km/s
+  <stem>.<label>.err.csv    same for the posterior std (when the model has Vsv_err)
+  <stem>.<label>.nodes.txt  node used for each site: lon, lat, distance, Ndat, AR23 Moho
+  <stem>.diff.csv           --fvs minus --fvs2 (km/s), with --fvs2
 """
-import argparse, os, sys
+import argparse, os, re, sys
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -45,49 +47,30 @@ def gc_km(lon1, lat1, lon2, lat2):
     return 6371.0 * np.arccos(np.clip(c, -1, 1))
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--fvs', default=os.environ.get('FVS2'), help='Fvs npz (default $FVS2)')
-    ap.add_argument('--label', default=None, help='model label (default from the file name)')
-    ap.add_argument('--field', default='vsv', choices=list(LABEL))
-    ap.add_argument('--sites', default=os.path.join(_HERE, '..', 'examples', 'yilgarn_sites_19.txt'))
-    ap.add_argument('--dz', type=float, default=0.5)
-    ap.add_argument('--z-max', type=float, default=70.0)
-    ap.add_argument('--idw', type=int, default=0, help='inverse-distance mean of K nearest nodes (0 = nearest)')
-    ap.add_argument('--max-km', type=float, default=50.0)
-    ap.add_argument('--min-ndat', type=int, default=35)
-    ap.add_argument('--moho', default=os.environ.get('MOHO'), help='AR23 Moho file (tick on each panel)')
-    ap.add_argument('--xlim', nargs=2, type=float, default=None)
-    ap.add_argument('--ncol', type=int, default=5)
-    ap.add_argument('--out', default='figures/sites/site_vsv.png')
-    a = ap.parse_args()
-    if not a.fvs:
-        sys.exit('give --fvs (or source env_stage6.sh for $FVS2)')
+def model_label(spec):
+    path, _, label = spec.partition(':')
+    if not label:
+        m = re.search(r'iter\.?(\d+)', os.path.basename(path))
+        label = f'iter{m.group(1)}' if m else os.path.basename(path).replace('.npz', '')
+    return path, label
 
-    d = dict(np.load(a.fvs, allow_pickle=True))
-    import re
-    m = re.search(r'iter\.?(\d+)', os.path.basename(a.fvs))
-    label = a.label or (f'iter{m.group(1)}' if m else os.path.basename(a.fvs))
+
+def sample(path, label, field, sites, zq, a, moho):
+    """-> dict(label, path, P [site, depth], Pe or None, info [per site])"""
+    d = dict(np.load(path, allow_pickle=True))
     F = model_fields(d)
-    if a.field not in F:
-        sys.exit(f"{os.path.basename(a.fvs)} has no varying '{a.field}' (has: {', '.join(F)})")
-    A = np.asarray(F[a.field], float)
-    E = np.asarray(d['Vsv_err'], float) if (a.field == 'vsv' and 'Vsv_err' in d
-                                              and 'Xi' not in F) else None
-    if a.field == 'viso' and 'Vsv_err' in d:
-        E = np.asarray(d['Vsv_err'], float)                 # xi models: Vsv_err belongs to Viso
+    if field not in F:
+        sys.exit(f"{os.path.basename(path)} has no varying '{field}' (has: {', '.join(F)})")
+    A = np.asarray(F[field], float)
+    E = None
+    if 'Vsv_err' in d and ((field == 'vsv' and 'xi' not in F) or field == 'viso'):
+        E = np.asarray(d['Vsv_err'], float)           # xi models: Vsv_err belongs to Viso
     z = np.asarray(d['z'], float)
     lon, lat = np.asarray(d['Lon'], float), np.asarray(d['Lat'], float)
     ndat = np.asarray(d['Ndat'], float) if 'Ndat' in d else np.full(len(lon), np.inf)
-    zq = np.arange(0, a.z_max + 1e-6, a.dz)
     if zq[-1] > z[-1]:
-        print(f"  (model stops at {z[-1]:g} km; deeper values left blank)")
-
-    sites = t2.load_sites(a.sites)
-    moho = None
-    if a.moho and os.path.isfile(a.moho):
-        from plot_domain_profiles import moho_at
-        moho = moho_at(a.moho, [s['lon'] for s in sites], [s['lat'] for s in sites])
+        print(f"  ({label}: model stops at {z[-1]:g} km; deeper values left blank)")
+    print(f"{label}: {os.path.basename(path)}")
     P, Pe, info = [], [], []
     for k, s in enumerate(sites):
         dist = gc_km(s['lon'], s['lat'], lon, lat)
@@ -109,33 +92,108 @@ def main():
         if ndat[i0] < a.min_ndat:
             flag.append(f'Ndat {ndat[i0]:.0f}')
         info.append(dict(lon=lon[i0], lat=lat[i0], dist=dist[i0], ndat=ndat[i0], flag='; '.join(flag),
-                         moho=(moho[k] if moho is not None else np.nan),
-                         nuse=(len(use) if a.idw > 1 else 1)))
+                         moho=(moho[k] if moho is not None else np.nan)))
         print(f"  {s['no']:2d} {s['name']:<10s} {s['terrane']:<14s} node {lon[i0]:7.2f} {lat[i0]:7.2f} "
               f"{dist[i0]:5.1f} km  Ndat {ndat[i0]:4.0f}" + (f"   ** {info[-1]['flag']}" if flag else ''))
-    P = np.array(P)
+    Pe = np.array(Pe) if all(e is not None for e in Pe) else None
+    return dict(label=label, path=path, P=np.array(P), Pe=Pe, info=info)
 
-    xl = a.xlim or (np.floor(np.nanmin(P) * 5) / 5, np.ceil(np.nanmax(P) * 5) / 5)
+
+def write_tables(M, sites, zq, field, how, stem):
+    head = ','.join(f"{s['no']}_{s['name']}" for s in sites)
+    fmt = lambda x: 'NaN' if not np.isfinite(x) else f"{x:.4f}"
+
+    def wide(fn, arr, title):
+        with open(fn, 'w') as f:
+            f.write(f"# {title}\n")
+            f.write('depth_km,' + head + '\n')
+            for i, zz in enumerate(zq):
+                f.write(f"{zz:g}," + ','.join(fmt(arr[k, i]) for k in range(len(sites))) + '\n')
+    L = M['label']
+    wide(f"{stem}.{L}.csv", M['P'], f"{L} {field} (km/s) at study sites, {how}; model {os.path.basename(M['path'])}")
+    if M['Pe'] is not None:
+        wide(f"{stem}.{L}.err.csv", M['Pe'], f"{L} posterior std of {field} (km/s) at study sites")
+    with open(f"{stem}.{L}.nodes.txt", 'w') as f:
+        f.write(f"# no name terrane site_lon site_lat node_lon node_lat dist_km Ndat AR23_moho_km flag  ({how})\n")
+        for s, q in zip(sites, M['info']):
+            f.write(f"{s['no']:2d} {s['name']:<10s} {s['terrane'].replace(' ', '_'):<14s} {s['lon']:8.3f} "
+                    f"{s['lat']:8.3f} {q['lon']:8.3f} {q['lat']:8.3f} {q['dist']:6.1f} {q['ndat']:5.0f} "
+                    f"{q['moho']:6.1f} {q['flag'].replace(' ', '_') or '-'}\n")
+    print(f"Tables: {stem}.{L}.csv" + (', .err.csv' if M['Pe'] is not None else '') + ', .nodes.txt')
+    return wide
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--fvs', default=os.environ.get('FVS2'), help='Fvs npz[:LABEL] (default $FVS2)')
+    ap.add_argument('--fvs2', default=None, help='second model drawn on top, e.g. $FVS10 (no Moho)')
+    ap.add_argument('--label', default=None, help='label of --fvs (default from the file name)')
+    ap.add_argument('--field', default='vsv', choices=list(LABEL))
+    ap.add_argument('--sites', default=os.path.join(_HERE, '..', 'examples', 'yilgarn_sites_19.txt'))
+    ap.add_argument('--dz', type=float, default=0.5)
+    ap.add_argument('--z-max', type=float, default=70.0)
+    ap.add_argument('--idw', type=int, default=0, help='inverse-distance mean of K nearest nodes (0 = nearest)')
+    ap.add_argument('--max-km', type=float, default=50.0)
+    ap.add_argument('--min-ndat', type=int, default=35)
+    ap.add_argument('--moho', default=os.environ.get('MOHO'), help='AR23 Moho file (tick on each panel)')
+    ap.add_argument('--xlim', nargs=2, type=float, default=None)
+    ap.add_argument('--ncol', type=int, default=5)
+    ap.add_argument('--out', default='figures/sites/site_vsv.png')
+    a = ap.parse_args()
+    if not a.fvs:
+        sys.exit('give --fvs (or source env_stage6.sh for $FVS2)')
+
+    zq = np.arange(0, a.z_max + 1e-6, a.dz)
+    sites = t2.load_sites(a.sites)
+    moho = None
+    if a.moho and os.path.isfile(a.moho):
+        from plot_domain_profiles import moho_at
+        moho = moho_at(a.moho, [s['lon'] for s in sites], [s['lat'] for s in sites])
+    p1, l1 = model_label(a.fvs)
+    M1 = sample(p1, a.label or l1, a.field, sites, zq, a, moho)
+    M2 = sample(*model_label(a.fvs2), a.field, sites, zq, a, moho) if a.fvs2 else None
+    if M2 is not None and M2['label'] == M1['label']:
+        M2['label'] += 'b'
+    allP = np.concatenate([M1['P'].ravel()] + ([M2['P'].ravel()] if M2 else []))
+    xl = a.xlim or (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5)
+
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
     fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, 3.0 * nr + 0.5), sharex=True, sharey=True,
                             squeeze=False)
     for k, s in enumerate(sites):
         ax = axs.flat[k]
         col = t2.terrane_colour(s['terrane'], k)
-        if Pe[k] is not None:
+        P, Pe, info = M1['P'], M1['Pe'], M1['info']
+        if M2 is not None and M2['Pe'] is not None:
+            ax.fill_betweenx(zq, M2['P'][k] - M2['Pe'][k], M2['P'][k] + M2['Pe'][k], color='0.5',
+                             alpha=0.15, lw=0)
+        if Pe is not None:
             ax.fill_betweenx(zq, P[k] - Pe[k], P[k] + Pe[k], color=col, alpha=0.18, lw=0)
         ax.plot(P[k], zq, color=col, lw=1.5)
+        if M2 is not None:
+            ax.plot(M2['P'][k], zq, color='k', lw=1.0, ls='--')
         if np.isfinite(info[k]['moho']):
             ax.plot([0.82, 1.0], [info[k]['moho']] * 2, color='k', lw=2.2,
                     transform=ax.get_yaxis_transform(), solid_capstyle='butt')
         ax.set_title(f"{s['no']} {s['name']}", fontsize=8.5, loc='left', pad=2, color=col, fontweight='bold')
-        ax.text(0.04, 0.03, f"{s['terrane']}\nnode {info[k]['dist']:.0f} km" +
-                (f"\n{info[k]['flag']}" if info[k]['flag'] else ''),
-                transform=ax.transAxes, fontsize=6.3, va='bottom',
-                color='#b03a2e' if info[k]['flag'] else '0.35')
+        fl = [info[k]['flag']] + ([f"{M2['label']}: {M2['info'][k]['flag']}"] if M2 and M2['info'][k]['flag']
+                                   and M2['info'][k]['flag'] != info[k]['flag'] else [])
+        flags = '; '.join(x for x in fl if x)
+        ax.text(0.04, 0.03, f"{s['terrane']}\nnode {info[k]['dist']:.0f} km"
+                + (f" / {M2['info'][k]['dist']:.0f} km" if M2 and abs(M2['info'][k]['dist'] - info[k]['dist']) > 0.5
+                   else '') + (f"\n{flags}" if flags else ''),
+                transform=ax.transAxes, fontsize=6.3, va='bottom', color='#b03a2e' if flags else '0.35')
         ax.grid(True, lw=0.3, color='0.85'); ax.tick_params(labelsize=7)
     for ax in list(axs.flat)[ns:]:
         ax.axis('off')
+    if ns < nr * nc:                                  # legend in the first empty slot
+        lax = list(axs.flat)[ns]
+        h = [Line2D([], [], color='0.3', lw=1.5, label=f"{M1['label']} (terrane colour, ±1σ band)")]
+        if M2 is not None:
+            h.append(Line2D([], [], color='k', lw=1.0, ls='--', label=f"{M2['label']} (grey band)"))
+        if moho is not None:
+            h.append(Line2D([], [], color='k', lw=2.2, label='AR23 Moho'))
+        lax.legend(handles=h, loc='upper left', fontsize=7.5, frameon=False)
     ax0 = axs.flat[0]
     ax0.set_ylim(a.z_max, 0); ax0.set_xlim(*xl)
     for ax in axs[:, 0]:
@@ -146,7 +204,9 @@ def main():
             col_axes[-1].xaxis.set_tick_params(labelbottom=True)
             col_axes[-1].set_xlabel(LABEL[a.field], fontsize=8)
     how = (f'inverse-distance mean of {a.idw} nearest nodes' if a.idw > 1 else 'nearest model node')
-    fig.suptitle(f"{label} {LABEL[a.field].split(' (')[0]} at the study sites ({how}; band: ±1 posterior std"
+    fld = LABEL[a.field].split(' (')[0]
+    fig.suptitle(f"{M1['label']}" + (f" (solid) vs {M2['label']} (dashed)" if M2 else '')
+                 + f" {fld} at the study sites ({how}; band: ±1 posterior std"
                  + ('; black tick: AR23 Moho' if moho is not None else '') + ')', fontsize=10.5)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
@@ -155,44 +215,35 @@ def main():
     print(f"Saved {a.out} (+ .pdf)")
 
     stem = os.path.splitext(a.out)[0]
-    fig, ax = plt.subplots(figsize=(5.6, 6.4))
+    models = [M1] + ([M2] if M2 else [])
+    fig, axs = plt.subplots(1, len(models), figsize=(5.0 * len(models) + 0.6, 6.4), sharey=True, squeeze=False)
     terr = []
-    for k, s in enumerate(sites):
-        ax.plot(P[k], zq, color=t2.terrane_colour(s['terrane'], k), lw=1.1, alpha=0.9)
-        if s['terrane'] not in terr:
-            terr.append(s['terrane'])
-    ax.set_ylim(a.z_max, 0); ax.set_xlim(*xl)
-    ax.set_xlabel(LABEL[a.field]); ax.set_ylabel('depth (km)'); ax.grid(True, lw=0.3, color='0.85')
-    ax.legend(handles=[Line2D([], [], color=t2.terrane_colour(t, i), lw=2, label=t) for i, t in enumerate(terr)],
-              fontsize=7.5, loc='lower left', frameon=True, framealpha=0.9, title='terrane', title_fontsize=8)
-    ax.set_title(f"{label}: {ns} study sites", fontsize=10)
+    for j, M in enumerate(models):
+        ax = axs[0, j]
+        for k, s in enumerate(sites):
+            ax.plot(M['P'][k], zq, color=t2.terrane_colour(s['terrane'], k), lw=1.1, alpha=0.9)
+            if s['terrane'] not in terr:
+                terr.append(s['terrane'])
+        ax.set_ylim(a.z_max, 0); ax.set_xlim(*xl)
+        ax.set_xlabel(LABEL[a.field]); ax.grid(True, lw=0.3, color='0.85')
+        ax.set_title(f"{M['label']}: {ns} study sites", fontsize=10)
+    axs[0, 0].set_ylabel('depth (km)')
+    axs[0, 0].legend(handles=[Line2D([], [], color=t2.terrane_colour(t, i), lw=2, label=t)
+                              for i, t in enumerate(terr)],
+                     fontsize=7.5, loc='lower left', frameon=True, framealpha=0.9, title='terrane',
+                     title_fontsize=8)
     fig.tight_layout()
     fig.savefig(stem + '.overlay.png', dpi=220); fig.savefig(stem + '.overlay.pdf')
     plt.close(fig)
     print(f"Saved {stem}.overlay.png (+ .pdf)")
 
-    head = ','.join(f"{s['no']}_{s['name']}" for s in sites)
-    with open(stem + '.csv', 'w') as f:
-        f.write(f"# {label} {a.field} (km/s) at study sites, {how}; model {os.path.basename(a.fvs)}\n")
-        f.write('depth_km,' + head + '\n')
-        for i, zz in enumerate(zq):
-            f.write(f"{zz:g}," + ','.join('NaN' if not np.isfinite(P[k, i]) else f"{P[k, i]:.4f}"
-                                          for k in range(ns)) + '\n')
-    if all(e is not None for e in Pe):
-        Pe = np.array(Pe)
-        with open(stem + '.err.csv', 'w') as f:
-            f.write(f"# {label} posterior std of {a.field} (km/s) at study sites\n")
-            f.write('depth_km,' + head + '\n')
-            for i, zz in enumerate(zq):
-                f.write(f"{zz:g}," + ','.join('NaN' if not np.isfinite(Pe[k, i]) else f"{Pe[k, i]:.4f}"
-                                              for k in range(ns)) + '\n')
-    with open(stem + '.nodes.txt', 'w') as f:
-        f.write(f"# no name terrane site_lon site_lat node_lon node_lat dist_km Ndat AR23_moho_km flag  ({how})\n")
-        for s, q in zip(sites, info):
-            f.write(f"{s['no']:2d} {s['name']:<10s} {s['terrane'].replace(' ', '_'):<14s} {s['lon']:8.3f} "
-                    f"{s['lat']:8.3f} {q['lon']:8.3f} {q['lat']:8.3f} {q['dist']:6.1f} {q['ndat']:5.0f} "
-                    f"{q['moho']:6.1f} {q['flag'].replace(' ', '_') or '-'}\n")
-    print(f"Tables: {stem}.csv" + (', .err.csv' if all(e is not None for e in Pe) else '') + ', .nodes.txt')
+    wide = None
+    for M in models:
+        wide = write_tables(M, sites, zq, a.field, how, stem)
+    if M2 is not None:
+        wide(f"{stem}.diff.csv", M1['P'] - M2['P'],
+             f"{M1['label']} minus {M2['label']}, {a.field} (km/s) at study sites, {how}")
+        print(f"       {stem}.diff.csv")
 
 
 if __name__ == '__main__':

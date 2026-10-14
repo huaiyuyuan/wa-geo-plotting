@@ -61,7 +61,8 @@ print(sys.argv[1].split('/')[-1], 'Xi', r('Xi'), 'Vpvs', r('Vpvs'))" $f; done
 | v3b dispersion maps | `$FIG/v3b/maps/` | `v3b.<Z|T>.<phase|group>.<P>s.dv-wac.fp.png`, `...sheet...`, `v3b.captions.txt` |
 | v3b domain dispersion | `$FIG/v3b/` | `domain_dispersion.png/.pdf/.csv/.npz` |
 | site dispersion (19 sites) | `$FIG/v3b/sites/` | `site_dispersion.png`, `.overlay.png`, `.csv`, `.<set>.csv` |
-| site Vsv profiles | `$FIG/<iter>/sites/` | `site_vsv.<iter>.png`, `.overlay.png`, `.csv`, `.err.csv`, `.nodes.txt` |
+| site Vsv profiles | `$FIG/<iter>/sites/` | `site_vsv.<iter>.png`, `.overlay.png`, `.<iter>.csv`, `.err.csv`, `.nodes.txt` |
+| site Vsv, two models | `$FIG/sites/` | `site_vsv.iter2_iter10.png`, `.diff.csv`; `site_depth_maps.iter2_iter10.png` |
 | domain Vsv (nine regions) | `$FIG/<iter>/domains/` | `domain_vsv.<iter>.png` + `.<iter>.txt/.npz` |
 
 Every PNG has a `.pdf` beside it. `fp` = array-footprint view, `wa` = whole WA.
@@ -286,6 +287,16 @@ python3 plotting/plot_site_profiles.py --fvs $FVS2 --sites examples/yilgarn_site
 #    -> .png (one panel per site, +-1 posterior std, AR23 Moho tick), .overlay.png,
 #       .csv (depth x site), .err.csv (posterior std), .nodes.txt (node used, distance, Ndat, Moho)
 #    --idw 4: inverse-distance mean of the 4 nearest nodes; flags: node > 50 km or Ndat < 35
+# 2b. iter2 (Moho) with iter10 (no Moho) on top: black dashed, grey band; + .diff.csv (iter2 - iter10)
+python3 plotting/plot_site_profiles.py --fvs $FVS2 --fvs2 $FVS10 --moho $MOHO --z-max 70 \
+    --out $FIG/sites/site_vsv.iter2_iter10.png
+#    -> .png, .overlay.png (one panel per model), .iter2.csv, .iter10.csv (+ .err.csv, .nodes.txt), .diff.csv
+
+# 2c. depth slices with the sites marked (terrane-coloured triangles, numbered): rows = models
+python3 plotting/plot_site_depth_maps.py --fvs $FVS2:iter2 $FVS10:iter10 --depths 5 20 35 45 \
+    --out $FIG/sites/site_depth_maps.iter2_iter10.png
+#    each depth column shares one Spectral scale; --rel = dVsv % vs each model's mean at that depth;
+#    --coverage blanks cells outside the v3b coverage mask; --extent wa for the whole state
 
 # 3. iter2 Vsv domain means for the nine regions of the domain dispersion figure
 python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 --domains dispersion --fields vsv \
