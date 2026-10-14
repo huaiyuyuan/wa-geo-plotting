@@ -218,6 +218,10 @@ python3 plotting/make_depth_maps.py --fvs-zt $FVS8 --tag-zt iter8 --modes rel --
 python3 plotting/make_depth_maps.py --fvs-z $FVS11 --tag-z iter11 --modes rel --ref-domain yilgarn \
     --out-dir $FIG/iter11
 ```
+Export the domains for other projects (one GeoJSON, no repo needed there):
+`python3 extract/export_domains.py --all --out $FIG/domains/wa_domains.geojson`
+(one feature per domain x 10M unit; properties domain/label/colour/unit; lon/lat).
+
 `--ref-domain` works for single sections too (`xsection.<line>.ref-yilgarn.png`) and in
 `plot_vsv_tectonic.py`; any domain key from `domains.csv` can be the reference.
 

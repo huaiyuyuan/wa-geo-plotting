@@ -60,7 +60,9 @@ class Domains:
         self.npz = _tect_npz(tect_npz)
         t = np.load(self.npz, allow_pickle=True)
         self.rings = [np.asarray(r, float)[:, :2] for r in t['rings']]
-        self.names = np.array([_norm(x) for x in (t['names'] if 'names' in t.files else t['parents'])])
+        raw = t['names'] if 'names' in t.files else t['parents']
+        self.raw_names = {_norm(x): str(x) for x in raw}       # normalised -> GSWA spelling
+        self.names = np.array([_norm(x) for x in raw])
         self.parents = np.array([_norm(x) for x in t['parents']])
         self.defs = load_domains(csv_path)
 
