@@ -14,6 +14,7 @@ sites file at the station positions that every site script takes (--sites).
 Writes
   <out>.table.txt  one row per site: site and station coordinates, network, phase, elevation,
                    distance (recomputed; flagged when it differs from --snap by > 1 km)
+  <out>.short.txt  the snap table with two more columns: station Lat, Lon (tab-separated)
   <out>.txt        sites file at the station positions (no name terrane lat lon); a site
                    without a station keeps its own position (marked in the table), so the
                    site plots run unchanged:  --sites examples/yilgarn_sites_19.stations.txt
@@ -110,11 +111,19 @@ def main():
             f.write(f"{s['no']:>2d}  {s['name']:<10s} {s['terrane']:<14s} {s['lat']:9.4f} {s['lon']:9.4f}  "
                     f"{sn['sta'] or '-':<7s} {sn['net']:<3s} {sn['phase']:<5s} {fmt(la, 9, 4)} {fmt(lo, 9, 4)} "
                     f"{fmt(el, 7, 1)} {fmt(dist, 7, 1)}  {note}\n")
+    with open(a.out + '.short.txt', 'w') as f:          # the snap table + station lat/lon
+        f.write('#\tName\tStation\tNetwork\tPhase\tDist (km)\tLat\tLon\n')
+        for s_, sn, la, lo, el, dist, note in rows:
+            nan = 'nan'
+            f.write(f"{s_['no']}\t{s_['name']}\t{sn['sta'] or nan}\t{sn['net'] if sn['sta'] else nan}\t"
+                    f"{sn['phase'] if sn['sta'] else nan}\t"
+                    + (f"{sn['dist']:.1f}" if np.isfinite(sn['dist']) else (f"{dist:.1f}" if np.isfinite(dist) else nan))
+                    + '\t' + (f"{la:.4f}\t{lo:.4f}" if np.isfinite(la) else 'nan\tnan') + '\n')
     with open(a.out + '.txt', 'w') as f:
         f.write('#\tName\tTerrane\tLAT\tLONG\t(at the snapped station; sites without one keep their own position)\n')
         for s in new:
             f.write(f"{s['no']}\t{s['name']}\t{s['terrane']}\t{s['lat']:.4f}\t{s['lon']:.4f}\n")
-    print(f"Saved {a.out}.table.txt and {a.out}.txt")
+    print(f"Saved {a.out}.table.txt, {a.out}.short.txt (snap table + station lat/lon) and {a.out}.txt")
 
 
 if __name__ == '__main__':

@@ -1,0 +1,20 @@
+#	Name	Terrane	LAT	LONG	(at the snapped station; sites without one keep their own position)
+1	Narryer	Narryer	-25.9999	116.6176
+2	Murgoo	Youanmi	-27.6000	116.2000
+3	Cue	Youanmi	-27.9944	118.2280
+4	Sstone	Youanmi	-27.5976	119.4270
+5	Wiluna	Kalgoorlie	-26.6000	120.4400
+6	Laverton	Kurnalpi	-28.4038	121.8074
+7	Burtville	Burtville	-27.1400	123.0000
+8	Yalgoo	Youanmi	-28.6000	116.8000
+9	Karroun	Youanmi	-30.0310	118.2455
+10	Ftania	Youanmi	-32.0193	120.2092
+11	Kal	Kalgoorlie	-30.7463	121.4734
+12	Kurn	Kurnalpi	-30.2832	121.7610
+13	Btown	South West	-33.9619	116.1390
+14	Bodd	South West	-32.7939	116.6041
+15	CTZ	Youanmi	-32.3557	118.1367
+16	Nman	Kalgoorlie	-31.9989	122.2036
+17	CAO	Capricorn	-24.3984	116.9967
+18	PJO	Pinjarra	-29.3000	115.1300
+19	E-AFO	Albany-Fraser	-31.6154	122.9631
