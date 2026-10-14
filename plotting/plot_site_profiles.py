@@ -184,7 +184,8 @@ def main():
             M['Pe'] = M['Pe'][keep] if M['Pe'] is not None else None
             M['info'] = [M['info'][k] for k in keep]
     allP = np.concatenate([M1['P'].ravel()] + ([M2['P'].ravel()] if M2 else []))
-    xl = a.xlim or (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5)
+    xl = a.xlim or ((0.9, 1.1) if a.field == 'xi' else
+                    (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5))
 
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
     fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), sharex=not a.slide, sharey=not a.slide,

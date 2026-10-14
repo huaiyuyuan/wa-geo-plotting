@@ -319,6 +319,15 @@ python3 plotting/plot_site_shallow.py --dir <folder or station_files.zip> \
 #    -> .png (own depth scale per panel; --zmax 300 for a common one), .overlay.png, .csv (1 m steps),
 #       .summary.txt (station, distance, Vs at 0/30/100 m, Vs30, max); flags station > 50 km, Vp/Vs files
 #    --slide (also for plot_site_profiles.py): 3 x 7 landscape panels for a 16:9 PowerPoint slide
+
+# 5. lithospheric columns: one bar per site coloured by Vsv in fixed bins (2.5-4.5 every 0.25), to 50 km
+python3 plotting/plot_site_columns.py --fvs $FVS2 --moho $MOHO \
+    --out $FIG/iter2/sites/site_columns.iter2.png
+#    shallow version (m, m/s; 250 m/s bins fitted to the profiles, to 650 m):
+python3 plotting/plot_site_columns.py --shallow <folder or station_files.zip> \
+    --out $FIG/sites/site_columns.shallow.png
+#    colours: vivid turbo, warm = slow (--cmap Spectral for the softer one); --order terrane;
+#    --bins LO HI STEP; --z-max; --field xi (0.9-1.1) / vpvs; AR23 Moho = black bar
 ```
 
 ---------------------------------------------------------------------------------------

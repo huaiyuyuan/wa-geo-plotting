@@ -136,9 +136,8 @@ def main():
             lims.append((-L, L))
         elif a.vlim and len(a.vlim) >= 2 * (j + 1):
             lims.append((a.vlim[2 * j], a.vlim[2 * j + 1]))
-        elif a.field == 'xi':                          # diverging around 1.0
-            d = max(0.01, np.ceil(np.nanpercentile(np.abs(allv - 1.0), 98) * 100) / 100)
-            lims.append((1.0 - d, 1.0 + d))
+        elif a.field == 'xi':                          # diverging around 1.0, fixed 0.9-1.1
+            lims.append((0.9, 1.1))
         else:
             lo_, hi_ = np.nanpercentile(allv, [2, 98])
             q = 100 if a.field == 'vpvs' else 20
