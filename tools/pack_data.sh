@@ -30,8 +30,13 @@ add /workspace/Others.data/AusMoho2023/AR23-moho-hmp.txt  $W/moho/
 add $ASDF/pathqc.v2/stations_v2.txt                 $W/stations/
 add $ASDF/footprint/wa_array_footprint.npz          $W/footprint/
 add $ASDF/footprint/wa_array_outline.txt            $W/footprint/
-for f in wa_tectonics wa_lithology wa_crustal_boundaries; do
+for f in wa_tectonics wa_lithology; do
   add /workspace/shape.files/derived/$f.npz $W/derived/
+done
+# crustal boundaries: derived/ if present, else the copy in the repo
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+for c in /workspace/shape.files/derived/wa_crustal_boundaries.npz $REPO/data/wa_crustal_boundaries.npz; do
+  [ -e $c ] && { add $c $W/derived/; break; }
 done
 if [ $CARTO = 1 ]; then
   for c in /data/25/yuan/mfiles/cartopy_data ~/.local/share/cartopy; do

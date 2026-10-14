@@ -20,6 +20,7 @@ fi
 export WA_MOHO=$MOHO
 export WA_TECTONICS_NPZ=$WA_DERIVED/wa_tectonics.npz
 export WA_BOUNDARIES_NPZ=$WA_DERIVED/wa_crustal_boundaries.npz
+[ -e $WA_BOUNDARIES_NPZ ] || export WA_BOUNDARIES_NPZ=$WGP/data/wa_crustal_boundaries.npz  # copy in the repo
 export FIG=${FIG:-$ST/figures}                    # one sub-folder per model: $FIG/iter8, ...
 
 # models (Fvs npz)
