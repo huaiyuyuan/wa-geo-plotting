@@ -107,6 +107,13 @@ def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.
     _add_states_ocean(ax, ocean='white', states='#e8e8e8')
     if tr is not None:
         ax.set_extent([112.5, 129.5, -35.8, -13.5], crs=tr)
+        try:                                          # graticule, labels bottom/left
+            gl = ax.gridlines(crs=tr, draw_labels=True, x_inline=False, y_inline=False,
+                              lw=0.3, color='0.6', alpha=0.7, xlocs=range(110, 135, 5), ylocs=range(-40, -9, 5))
+            gl.top_labels = gl.right_labels = False
+            gl.xlabel_style = gl.ylabel_style = {'size': 7}
+        except Exception:
+            pass
     else:
         ax.set_xlim(112.5, 129.5); ax.set_ylim(-35.8, -13.5); ax.set_aspect('equal')
     ax.set_title(f'Nodes per domain ({models[0][1]})' if show_nodes else
@@ -142,6 +149,8 @@ def main():
                     help="real stations on the map instead of the model-node dots ('name lat lon ...' file, "
                          "e.g. stations.phases.1.2.3.txt)")
     ap.add_argument('--show-nodes', action='store_true', help='with --stations: keep the node dots too')
+    ap.add_argument('--map-proj', choices=['albers', 'plate'], default='albers',
+                    help='map panel projection: albers (GSWA 2022 map, default) or plate (lon/lat)')
     ap.add_argument('--rel-to', default=None, metavar='DOMAIN',
                     help='extra panel: d(first field) in %% relative to this domain mean (e.g. wac)')
     ap.add_argument('--footprint-npz', default=None)
@@ -208,8 +217,12 @@ def main():
     if nmap:
         try:
             import cartopy.crs as ccrs
-            tr = ccrs.PlateCarree()
-            axm = fig.add_axes([x0 / W, 0.10, 4.2 / W, 0.78], projection=tr)
+            tr = ccrs.PlateCarree()                  # data are lon/lat
+            # map frame: Albers equal-area as the GSWA 2022 tectonic map (121E, 17.5S/31.5S),
+            # so the 129E border tilts as on the GSWA map; --map-proj plate for the old look
+            proj = (ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
+                    if a.map_proj == 'albers' else tr)
+            axm = fig.add_axes([x0 / W, 0.10, 4.2 / W, 0.78], projection=proj)
         except Exception:
             axm = fig.add_axes([x0 / W, 0.10, 4.2 / W, 0.78])
         sites = None
