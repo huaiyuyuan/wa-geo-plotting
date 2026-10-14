@@ -42,6 +42,7 @@ print(sys.argv[1].split('/')[-1], 'Xi', r('Xi'), 'Vpvs', r('Vpvs'))" $f; done
 |---|---|
 | stations (912) | `/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/pathqc.v2/stations_v2.txt` |
 | array footprint | `/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/footprint/wa_array_footprint.npz`, `wa_array_outline.txt` |
+| v3b surface-wave maps (`$V3B`) | `/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/v3b/{Z,T}/{group,phase}_v_tomo/TransD.region.{group,phase}.npz` |
 | GSWA basemap caches | `/workspace/shape.files/derived/wa_tectonics.npz`, `wa_lithology.npz`, `wa_crustal_boundaries.npz` |
 | GSWA shapefiles | `/workspace/shape.files/` (10M tectonic units, 500k tectonic units, Major Crustal Boundaries 2025) |
 | 2022 map colours / labels / legend | `basemap/tectonic_map_2022_colours.csv`, `tectonic_map_2022_labels.csv`, `tectonic_map_2022_legend.json` |
@@ -57,6 +58,8 @@ print(sys.argv[1].split('/')[-1], 'Xi', r('Xi'), 'Vpvs', r('Vpvs'))" $f; done
 | model vs model, sections | `$FIG/compare_<A>_<B>/` | `compare.<section>.png` |
 | model vs model, maps | `$FIG/compare_<A>_<B>/` | `compare.<vsv|xi>.<abs|rel>.<fp|wa>.png` |
 | regional 1-D profile | `$FIG/<iter>/` | `regional_profile.png` (+ `.txt` table) |
+| v3b dispersion maps | `$FIG/v3b/maps/` | `v3b.<Z|T>.<phase|group>.<P>s.dv-wac.fp.png`, `...sheet...`, `v3b.captions.txt` |
+| v3b domain dispersion | `$FIG/v3b/` | `domain_dispersion.png/.pdf/.csv/.npz` |
 
 Every PNG has a `.pdf` beside it. `fp` = array-footprint view, `wa` = whole WA.
 
@@ -224,6 +227,44 @@ Export the domains for other projects (one GeoJSON, no repo needed there):
 
 `--ref-domain` works for single sections too (`xsection.<line>.ref-yilgarn.png`) and in
 `plot_vsv_tectonic.py`; any domain key from `domains.csv` can be the reference.
+
+---------------------------------------------------------------------------------------
+## 7c. v3b surface-wave maps and domain dispersion curves
+Input: `$V3B/{Z,T}/{group,phase}_v_tomo/TransD.region.{group,phase}.npz` (v3b band120,
+iter 2; keys fk, vall2 [nper,70,60] km/s, std2, maski, lat2d, lon2d). Periods:
+Z phase 2.5–60 s (29), Z group 2.5–40 (24), T phase 2.5–48 (26), T group 2.5–32 (22).
+
+**Mask (every WA Array map):** footprint npz key `density` (10 s path samples per cell,
+array-to-array paths only) ≥ 10, holes filled, largest region, no dilation — AND posterior
+std ≤ 0.80 (finite `maski`) — AND finite velocity. (`mask` in that npz = old v2 mask; not used.)
+```bash
+# single-period maps, all four sets: dV vs the WAC mean, per-panel limits from inside the WAC
+python3 plotting/plot_dispersion_maps.py --root $V3B --periods 3 5 8 12 20 30 40 60 \
+    --sheet --pdf --out $FIG/v3b/maps
+# one set, chosen periods; fixed +-4 % instead (file tag dv-wac-pm4)
+python3 plotting/plot_dispersion_maps.py --root $V3B --sets Z.phase --periods 5 10 20 40 \
+    --clim fixed --pct 4 --out $FIG/v3b/maps
+# absolute velocity (Spectral) / posterior std / whole WA frame / Yilgarn reference
+python3 plotting/plot_dispersion_maps.py --root $V3B --field abs --periods 10 30 --out $FIG/v3b/maps
+python3 plotting/plot_dispersion_maps.py --root $V3B --field std --periods 10 30 --out $FIG/v3b/maps
+python3 plotting/plot_dispersion_maps.py --root $V3B --extent wa --ref-domain yilgarn --out $FIG/v3b/maps
+
+# per-domain mean dispersion curves (+ node counts), tables beside the figure
+python3 plotting/plot_domain_dispersion.py --root $V3B --out $FIG/v3b/domain_dispersion.png
+```
+- Overlays: domain outlines (WAC thick; Yilgarn, Pilbara, Capricorn, Albany–Fraser, Perth,
+  Canning, Officer, Eucla thin, labels at the GSWA 2022 positions; `--domains`, `--labels
+  short|full|none`), dashed coverage-mask edge (`--no-cov-line`), array stations W????,
+  C[WESC]??, F??? (`--show-stations all` adds the rest hollow).
+- Colour scale for dV, one rule for all periods: `--clim ref` (default; ±L per panel, L = 98th
+  percentile of |dV| inside the WAC, rounded up to 0.5 %, arrowed colourbar — same rule as
+  noise_asdf `plot_masked_periods.py --ref-name "West Australian Craton"`) or `--clim fixed --pct P`.
+- `--smooth 4` bilinear upsampling for display (1 = raw cells). `--periods all` for every period.
+- Curves: cells in domain ∩ mask at each period; points with < 5 cells dropped (`--min-nodes`);
+  rows = mean (±1σ across cells), dV vs WAC, cell count. Domains overlap (WAC ⊃ Yilgarn ...).
+- Caption caveats (printed on the maps and in `v3b.captions.txt`): Z group 32–40 s low confidence
+  (residual RMS 21–34 s); T group ~30–32 s low confidence; Z phase 52–60 s at the 50-cell floor
+  (1.3–2.3k rays), smooth by construction; long-period group dropped (Z > 40 s, T > 32 s).
 
 ---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)

@@ -25,6 +25,10 @@ TMP=$(mktemp -d); W=$TMP/wa_data
 mkdir -p $W/stage6/figures/xsections $W/moho $W/stations $W/footprint $W/derived
 add() { if [ -e "$1" ]; then ln -s "$1" "$2"; echo "  + $1"; else echo "  - missing $1"; fi; }
 for i in $ITERS; do for f in $ST/Fvs.iter.$i.*.npz; do add "$f" $W/stage6/; done; done
+for c in Z T; do for t in group phase; do        # v3b surface-wave maps (small)
+  mkdir -p $W/v3b/$c/${t}_v_tomo
+  add $ASDF/v3b/$c/${t}_v_tomo/TransD.region.$t.npz $W/v3b/$c/${t}_v_tomo/
+done; done
 add $ST/figures/xsections/sections.txt              $W/stage6/figures/xsections/
 add /workspace/Others.data/AusMoho2023/AR23-moho-hmp.txt  $W/moho/
 add $ASDF/pathqc.v2/stations_v2.txt                 $W/stations/

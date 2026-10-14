@@ -7,6 +7,7 @@ export WGP=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [ -n "$WA_DATA" ]; then                        # portable bundle
     export ST=$WA_DATA/stage6
+    export V3B=$WA_DATA/v3b
     export MOHO=$WA_DATA/moho/AR23-moho-hmp.txt
     export WA_DERIVED=$WA_DATA/derived            # read by config.py
     export WA_STATIONS=$WA_DATA/stations/stations_v2.txt
@@ -14,6 +15,7 @@ if [ -n "$WA_DATA" ]; then                        # portable bundle
     [ -d $WA_DATA/cartopy_data ] && export CARTOPY_DATA_DIR=$WA_DATA/cartopy_data
 else                                              # d204403
     export ST=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/stage6
+    export V3B=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/v3b
     export MOHO=/workspace/Others.data/AusMoho2023/AR23-moho-hmp.txt
     export WA_DERIVED=${WA_DERIVED:-/workspace/shape.files/derived}
 fi
@@ -28,6 +30,9 @@ export FVS2=$ST/Fvs.iter.2.Z.npz                  # Rayleigh Vsv, with Moho (Vp/
 export FVS8=$ST/Fvs.iter.8.ZT.npz                 # radial anisotropy: Vsv pinned to iter2, xi inverted
 export FVS10=$ST/Fvs.iter.10.Z.npz                # Vsv, no Moho
 export FVS11=$ST/Fvs.iter.11.Z.npz                # Vsv + Vp/Vs inverted (1.67-1.88)
+
+# surface-wave maps (v3b band120 iter-2): $V3B/{Z,T}/{group,phase}_v_tomo/TransD.region.*.npz
+# coverage mask: footprint npz key 'density' (config.FOOTPRINT_NPZ)
 
 # inputs
 export XS=$ST/figures/xsections/sections.txt      # NS1-7 / EW1-7 (picked 8 Oct 2026; .bak.* = older lists)
