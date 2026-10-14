@@ -22,6 +22,10 @@ Outputs (per model <label>, e.g. iter2, iter10)
   <stem>.<label>.err.csv    same for the posterior std (when the model has Vsv_err)
   <stem>.<label>.nodes.txt  node used for each site: lon, lat, distance, Ndat, AR23 Moho
   <stem>.diff.csv           --fvs minus --fvs2 (km/s), with --fvs2
+With --ref-domain yilgarn: <stem>.dv-yilgarn.png (+ .overlay.png) = each site as dVsv (%)
+from the Yilgarn mean of the same model (all its nodes in the Yilgarn with Ndat >= 35), grey
+band = +-1 sigma lateral spread of those nodes; tables <stem>.<label>.dv-yilgarn.csv and
+<stem>.<label>.yilgarn-mean.csv.
 """
 import argparse, os, re, sys
 import numpy as np
@@ -96,7 +100,8 @@ def sample(path, label, field, sites, zq, a, moho):
         print(f"  {s['no']:2d} {s['name']:<10s} {s['terrane']:<14s} node {lon[i0]:7.2f} {lat[i0]:7.2f} "
               f"{dist[i0]:5.1f} km  Ndat {ndat[i0]:4.0f}" + (f"   ** {info[-1]['flag']}" if flag else ''))
     Pe = np.array(Pe) if all(e is not None for e in Pe) else None
-    return dict(label=label, path=path, P=np.array(P), Pe=Pe, info=info)
+    return dict(label=label, path=path, P=np.array(P), Pe=Pe, info=info,
+                lon=lon, lat=lat, z=z, A=A, ndat=ndat)
 
 
 def write_tables(M, sites, zq, field, how, stem):
@@ -138,6 +143,13 @@ def main():
     ap.add_argument('--moho', default=os.environ.get('MOHO'), help='AR23 Moho file (tick on each panel)')
     ap.add_argument('--xlim', nargs=2, type=float, default=None)
     ap.add_argument('--ncol', type=int, default=5)
+    ap.add_argument('--ref-domain', default=None, metavar='DOMAIN',
+                    help='also plot each site as d(field) %% from this domain mean (e.g. yilgarn): '
+                         'mean over the model nodes in the domain with Ndat >= --min-ndat')
+    ap.add_argument('--tect-npz', default=None)
+    ap.add_argument('--skip-flagged', action='store_true',
+                    help='leave out sites whose nearest node is beyond --max-km or has Ndat < --min-ndat')
+    ap.add_argument('--dlim', type=float, default=None, help='+- x limit (%%) of the --ref-domain figure')
     ap.add_argument('--out', default='figures/sites/site_vsv.png')
     a = ap.parse_args()
     if not a.fvs:
@@ -154,6 +166,17 @@ def main():
     M2 = sample(*model_label(a.fvs2), a.field, sites, zq, a, moho) if a.fvs2 else None
     if M2 is not None and M2['label'] == M1['label']:
         M2['label'] += 'b'
+    if a.skip_flagged:                                 # only sites with a good node in every model
+        keep = [k for k in range(len(sites))
+                if not M1['info'][k]['flag'] and not (M2 and M2['info'][k]['flag'])]
+        drop = [sites[k]['name'] for k in range(len(sites)) if k not in keep]
+        if drop:
+            print(f"  --skip-flagged: leaving out {', '.join(drop)}")
+        sites = [sites[k] for k in keep]
+        for M in [M1] + ([M2] if M2 else []):
+            M['P'] = M['P'][keep]
+            M['Pe'] = M['Pe'][keep] if M['Pe'] is not None else None
+            M['info'] = [M['info'][k] for k in keep]
     allP = np.concatenate([M1['P'].ravel()] + ([M2['P'].ravel()] if M2 else []))
     xl = a.xlim or (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5)
 
@@ -244,6 +267,111 @@ def main():
         wide(f"{stem}.diff.csv", M1['P'] - M2['P'],
              f"{M1['label']} minus {M2['label']}, {a.field} (km/s) at study sites, {how}")
         print(f"       {stem}.diff.csv")
+    if a.ref_domain:
+        ref_figures(a, sites, zq, models, stem, how, wide)
+
+
+def ref_figures(a, sites, zq, models, stem, how, wide):
+    """Sites as d(field) % from the domain mean of each model; band = +-1 sigma lateral spread."""
+    from domains import Domains
+    sys.path.insert(0, os.path.join(_HERE, '..', 'extract'))
+    from export_domains import all_definitions
+    D = Domains(a.tect_npz)
+    D.defs = all_definitions(True)
+    key = a.ref_domain
+    lab = D[key]['label']
+    tag = f"dv-{key}"
+    for M in models:
+        m = D.contains(key, M['lon'], M['lat']) & (M['ndat'] >= a.min_ndat)
+        if not m.any():
+            sys.exit(f"no {M['label']} nodes in '{key}' with Ndat >= {a.min_ndat}")
+        mean = np.array([np.interp(zq, M['z'], col, right=np.nan) for col in [np.nanmean(M['A'][m], 0)]])[0]
+        sd = np.interp(zq, M['z'], np.nanstd(M['A'][m], 0), right=np.nan)
+        M['ref'] = dict(mean=mean, std=sd, n=int(m.sum()))
+        M['dv'] = 100.0 * (M['P'] - mean) / mean
+        M['band'] = 100.0 * sd / mean
+        print(f"{M['label']}: {lab} mean over {m.sum()} nodes (Ndat >= {a.min_ndat})")
+        with open(f"{stem}.{M['label']}.{key}-mean.csv", 'w') as f:
+            f.write(f"# {M['label']} {a.field}: {lab} mean and lateral std over {m.sum()} nodes (Ndat >= {a.min_ndat})\n")
+            f.write('depth_km,mean_kms,std_kms\n')
+            for i, zz in enumerate(zq):
+                f.write(f"{zz:g},{mean[i]:.4f},{sd[i]:.4f}\n")
+        wide(f"{stem}.{M['label']}.{tag}.csv", M['dv'],
+             f"{M['label']} d{a.field} (%) of the study sites from the {lab} mean ({m.sum()} nodes), {how}")
+    M1, M2 = models[0], (models[1] if len(models) > 1 else None)
+    allv = np.concatenate([M['dv'].ravel() for M in models])
+    L = a.dlim or max(2.0, np.ceil(np.nanpercentile(np.abs(allv), 99)))
+    fld = LABEL[a.field].split(' (')[0]
+    ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
+    fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, 3.0 * nr + 0.5), sharex=True, sharey=True,
+                            squeeze=False)
+    for k, s in enumerate(sites):
+        ax = axs.flat[k]
+        col = t2.terrane_colour(s['terrane'], k)
+        ax.fill_betweenx(zq, -M1['band'], M1['band'], color='0.6', alpha=0.25, lw=0)
+        ax.axvline(0, color='0.3', lw=0.7)
+        ax.plot(M1['dv'][k], zq, color=col, lw=1.5)
+        if M2 is not None:
+            ax.plot(M2['dv'][k], zq, color='k', lw=1.0, ls='--')
+        mo = M1['info'][k]['moho']
+        if np.isfinite(mo):
+            ax.plot([0.82, 1.0], [mo, mo], color='k', lw=2.2, transform=ax.get_yaxis_transform(),
+                    solid_capstyle='butt')
+        ax.set_title(f"{s['no']} {s['name']}", fontsize=8.5, loc='left', pad=2, color=col, fontweight='bold')
+        fl = M1['info'][k]['flag']
+        ax.text(0.04, 0.03, s['terrane'] + (f"\n{fl}" if fl else ''), transform=ax.transAxes, fontsize=6.3,
+                va='bottom', color='#b03a2e' if fl else '0.35')
+        ax.grid(True, lw=0.3, color='0.85'); ax.tick_params(labelsize=7)
+    for ax in list(axs.flat)[ns:]:
+        ax.axis('off')
+    if ns < nr * nc:
+        lax = list(axs.flat)[ns]
+        h = [Line2D([], [], color='0.3', lw=1.5, label=f"{M1['label']} (terrane colour)")]
+        if M2 is not None:
+            h.append(Line2D([], [], color='k', lw=1.0, ls='--', label=f"{M2['label']} (vs its own {key} mean)"))
+        from matplotlib.patches import Patch
+        h.append(Patch(color='0.6', alpha=0.35, label=f"±1σ spread of {lab}\nnodes ({M1['label']})"))
+        if np.isfinite(M1['info'][0]['moho']):
+            h.append(Line2D([], [], color='k', lw=2.2, label='AR23 Moho'))
+        lax.legend(handles=h, loc='upper left', fontsize=7.2, frameon=False)
+    axs.flat[0].set_ylim(a.z_max, 0); axs.flat[0].set_xlim(-L, L)
+    for ax in axs[:, 0]:
+        ax.set_ylabel('depth (km)', fontsize=8)
+    for c in range(nc):
+        col_axes = [axs[r, c] for r in range(nr) if r * nc + c < ns]
+        if col_axes:
+            col_axes[-1].xaxis.set_tick_params(labelbottom=True)
+            col_axes[-1].set_xlabel(f"d{fld} (%) from {key} mean", fontsize=8)
+    fig.suptitle(f"Study sites relative to the {lab} mean {fld} ({M1['label']}: {M1['ref']['n']} nodes"
+                 + (f"; {M2['label']}: {M2['ref']['n']} nodes" if M2 else '') + f", Ndat >= {a.min_ndat}; {how})",
+                 fontsize=10.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fn = f"{stem}.{tag}.png"
+    fig.savefig(fn, dpi=220); fig.savefig(fn[:-4] + '.pdf')
+    plt.close(fig)
+    print(f"Saved {fn} (+ .pdf)")
+
+    # overlay: one panel per model, all sites by terrane
+    fig, axs = plt.subplots(1, len(models), figsize=(4.6 * len(models) + 0.6, 6.4), sharey=True, squeeze=False)
+    terr = []
+    for j, M in enumerate(models):
+        ax = axs[0, j]
+        ax.fill_betweenx(zq, -M['band'], M['band'], color='0.6', alpha=0.25, lw=0)
+        ax.axvline(0, color='0.3', lw=0.7)
+        for k, s in enumerate(sites):
+            ax.plot(M['dv'][k], zq, color=t2.terrane_colour(s['terrane'], k), lw=1.1, alpha=0.9)
+            if s['terrane'] not in terr:
+                terr.append(s['terrane'])
+        ax.set_ylim(a.z_max, 0); ax.set_xlim(-L, L); ax.grid(True, lw=0.3, color='0.85')
+        ax.set_xlabel(f"d{fld} (%) from {key} mean"); ax.set_title(f"{M['label']} ({M['ref']['n']} {key} nodes)",
+                                                                  fontsize=10)
+    axs[0, 0].set_ylabel('depth (km)')
+    axs[0, 0].legend(handles=[Line2D([], [], color=t2.terrane_colour(t, i), lw=2, label=t) for i, t in enumerate(terr)],
+                     fontsize=7.5, loc='lower left', frameon=True, framealpha=0.9, title='terrane', title_fontsize=8)
+    fig.tight_layout()
+    fig.savefig(f"{stem}.{tag}.overlay.png", dpi=220); fig.savefig(f"{stem}.{tag}.overlay.pdf")
+    plt.close(fig)
+    print(f"Saved {stem}.{tag}.overlay.png (+ .pdf); tables {stem}.<model>.{tag}.csv, .<model>.{key}-mean.csv")
 
 
 if __name__ == '__main__':

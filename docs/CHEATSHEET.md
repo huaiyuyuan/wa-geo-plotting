@@ -291,6 +291,9 @@ python3 plotting/plot_site_profiles.py --fvs $FVS2 --sites examples/yilgarn_site
 python3 plotting/plot_site_profiles.py --fvs $FVS2 --fvs2 $FVS10 --moho $MOHO --z-max 70 \
     --out $FIG/sites/site_vsv.iter2_iter10.png
 #    -> .png, .overlay.png (one panel per model), .iter2.csv, .iter10.csv (+ .err.csv, .nodes.txt), .diff.csv
+#    + --ref-domain yilgarn: sites as dVsv (%) from each model's Yilgarn mean (its Yilgarn nodes,
+#      Ndat >= 35), grey band = +-1 sigma spread of those nodes -> .dv-yilgarn.png, .dv-yilgarn.overlay.png,
+#      .<model>.dv-yilgarn.csv, .<model>.yilgarn-mean.csv;  --skip-flagged drops sites > 50 km from a node
 
 # 2c. depth slices with the sites marked (terrane-coloured triangles, numbered): rows = models
 python3 plotting/plot_site_depth_maps.py --fvs $FVS2:iter2 $FVS10:iter10 --depths 5 20 35 45 \
