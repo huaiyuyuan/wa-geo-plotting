@@ -313,6 +313,8 @@ python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 --domains dispersion 
 #    --rel-to wac adds a dVsv (%) panel; tables domain_vsv.iter2.iter2.txt/.npz (0.5 km steps)
 #    --sites examples/yilgarn_sites_19.txt marks the 19 sites on the map; with --coverage the land
 #    outside the coverage mask is faded (--no-veil to switch off, --veil-alpha, --veil-colour 0.7)
+#    --stations stations.phases.1.2.3.txt: real stations (958, phases 1-3) on the map instead of the
+#    model-node dots (--show-nodes keeps both)
 
 # 4. shallow Vs (top ~0.1-2 km) at the sites, from the station median profiles
 #    (<no>_<name>_median_vs_station_<STA>.dat: lon lat depth_m Vs_m/s), same panel layout

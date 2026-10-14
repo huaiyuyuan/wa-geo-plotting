@@ -62,7 +62,8 @@ def moho_at(path, lon, lat):
     return np.array([float(np.ravel(f(a, o))[0]) for a, o in zip(lat, lon)])
 
 
-def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.6, veil_colour='white'):
+def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.6, veil_colour='white',
+             stations=None, show_nodes=True):
     from plot_depth_slice import _add_states_ocean
     import tomo2d as t2
     for k in keys:                                   # unit outlines, filled faintly
@@ -76,10 +77,14 @@ def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.
     d0 = models[0][2]
     lon, lat = np.asarray(d0['Lon']), np.asarray(d0['Lat'])
     kw = {'transform': tr} if tr else {}
-    ax.scatter(lon, lat, s=2, c='0.75', lw=0, zorder=3, **kw)
-    for k in sorted(keys, key=lambda k: -masks[(models[0][1], k)].sum()):   # big first
-        m = masks[(models[0][1], k)]
-        ax.scatter(lon[m], lat[m], s=5, c=D[k]['colour'], lw=0, zorder=4, **kw)
+    if show_nodes:                                   # model nodes, coloured by domain
+        ax.scatter(lon, lat, s=2, c='0.75', lw=0, zorder=3, **kw)
+        for k in sorted(keys, key=lambda k: -masks[(models[0][1], k)].sum()):   # big first
+            m = masks[(models[0][1], k)]
+            ax.scatter(lon[m], lat[m], s=5, c=D[k]['colour'], lw=0, zorder=4, **kw)
+    if stations is not None and len(stations[0]):   # real stations (name lat lon ...)
+        ax.scatter(stations[0], stations[1], marker='^', s=7, c='k', edgecolors='w', linewidths=0.2,
+                   zorder=6, **kw)
     if cov is not None:                              # fade the land outside the coverage mask
         from matplotlib.colors import ListedColormap
         la, lo, cm = cov
@@ -104,7 +109,8 @@ def draw_map(ax, D, keys, models, masks, tr, cov=None, sites=None, veil_alpha=0.
         ax.set_extent([112.5, 129.5, -35.8, -13.5], crs=tr)
     else:
         ax.set_xlim(112.5, 129.5); ax.set_ylim(-35.8, -13.5); ax.set_aspect('equal')
-    ax.set_title(f'Nodes per domain ({models[0][1]})', fontsize=9)
+    ax.set_title(f'Nodes per domain ({models[0][1]})' if show_nodes else
+                 f'Domains and stations ({len(stations[0]) if stations is not None else 0})', fontsize=9)
 
 
 def main():
@@ -132,6 +138,10 @@ def main():
     ap.add_argument('--veil-alpha', type=float, default=0.6)
     ap.add_argument('--veil-colour', default='white')
     ap.add_argument('--sites', default=None, help='study sites to mark on the map (e.g. examples/yilgarn_sites_19.txt)')
+    ap.add_argument('--stations', default=None,
+                    help="real stations on the map instead of the model-node dots ('name lat lon ...' file, "
+                         "e.g. stations.phases.1.2.3.txt)")
+    ap.add_argument('--show-nodes', action='store_true', help='with --stations: keep the node dots too')
     ap.add_argument('--rel-to', default=None, metavar='DOMAIN',
                     help='extra panel: d(first field) in %% relative to this domain mean (e.g. wac)')
     ap.add_argument('--footprint-npz', default=None)
@@ -206,8 +216,15 @@ def main():
         if a.sites:
             import tomo2d as t2
             sites = t2.load_sites(a.sites)
+        stations = None
+        if a.stations:
+            import tomo2d as t2
+            _, slon, slat, _ = t2.load_stations(a.stations)
+            stations = (slon, slat)
+            print(f"  map: {len(slon)} stations from {a.stations}")
         draw_map(axm, D, keys, models, masks, tr, cov=cov if not a.no_veil else None, sites=sites,
-                 veil_alpha=a.veil_alpha, veil_colour=a.veil_colour)
+                 veil_alpha=a.veil_alpha, veil_colour=a.veil_colour, stations=stations,
+                 show_nodes=a.show_nodes or not a.stations)
         x0 += 4.6
     axes = []
     for j, f in enumerate(fields):
