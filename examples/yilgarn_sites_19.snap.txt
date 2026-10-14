@@ -1,0 +1,20 @@
+# site_no site_name station network phase dist_km   (snapped station per study site; nan = none)
+1	Narryer	WBE10	WG	3	11.8
+2	Murgoo	WBI09	WG	3	1.4
+3	Cue	WBJ14	WG	2	17.8
+4	Sstone	WBI17	WG	3	17.9
+5	Wiluna	nan	nan	nan	nan
+6	Laverton	WBK23	WG	2	22.1
+7	Burtville	nan	nan	nan	nan
+8	Yalgoo	WBL60	WG	3	28.0
+9	Karroun	WBO14	WG	1	12.6
+10	Ftania	WBT19	WG	2	4.3
+11	Kal	KLGHS	AU	-	8.7
+12	Kurn	KLGGI	AU	-	32.6
+13	Btown	WBY09	WG	1	13.5
+14	Bodd	WBV10	WG	1	18.6
+15	CTZ	WBU14	WG	1	20.3
+16	Nman	WBT24	WG	2	36.2
+17	CAO	WBA11	WG	3	29.9
+18	PJO	WBM56	WG	3	19.3
+19	E-AFO	WBS26	WG	2	30.5

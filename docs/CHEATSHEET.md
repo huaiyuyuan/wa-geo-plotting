@@ -324,6 +324,12 @@ python3 plotting/plot_site_shallow.py --dir <folder or station_files.zip> \
 #       .summary.txt (station, distance, Vs at 0/30/100 m, Vs30, max); flags station > 50 km, Vp/Vs files
 #    --slide (also for plot_site_profiles.py): 3 x 7 landscape panels for a 16:9 PowerPoint slide
 
+# 0. snap the sites to their stations (table to send round + a sites file at the station positions)
+python3 tools/snap_sites.py --snap examples/yilgarn_sites_19.snap.txt \
+    --stations $ST/stations.phases.1.2.3.txt --out examples/yilgarn_sites_19.stations
+#    -> examples/yilgarn_sites_19.stations.table.txt, examples/yilgarn_sites_19.stations.txt
+#    then any site plot at the stations: --sites examples/yilgarn_sites_19.stations.txt
+
 # 5. lithospheric columns: one bar per site coloured by Vsv in fixed bins (3.0-4.5 every 0.25), to 50 km
 python3 plotting/plot_site_columns.py --fvs $FVS2 --moho $MOHO \
     --out $FIG/iter2/sites/site_columns.iter2.png
