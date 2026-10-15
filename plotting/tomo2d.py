@@ -18,6 +18,14 @@ dilation. (Key 'mask' in the same file is the old v2 mask: threshold 40, dilated
 Figure mask = coverage AND posterior std <= 0.80 (finite maski) AND finite velocity.
 """
 import os, re
+
+# Natural Earth data (no internet on d204403): set CARTOPY_DATA_DIR before cartopy is imported,
+# exactly as plot_depth_slice.py does - cartopy reads it at import as its pre-downloaded data dir
+for _c in ('/data/25/yuan/mfiles/cartopy_data', '/mnt/data64/yuan/mfiles/cartopy_data',
+           os.path.expanduser('~/.local/share/cartopy')):
+    if os.path.isdir(_c) and not os.environ.get('CARTOPY_DATA_DIR'):
+        os.environ['CARTOPY_DATA_DIR'] = _c
+        break
 import numpy as np
 
 SETS = (('Z', 'phase'), ('T', 'phase'), ('Z', 'group'), ('T', 'group'))
@@ -280,6 +288,7 @@ def _natural_earth_states():
                     break
         import cartopy
         if cd:
+            cartopy.config['pre_existing_data_dir'] = cd   # read-only copy (what the env var sets)
             cartopy.config['data_dir'] = cd
         import cartopy.io.shapereader as shpreader
         shp = shpreader.natural_earth('50m', 'cultural', 'admin_1_states_provinces')
