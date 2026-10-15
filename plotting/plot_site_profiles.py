@@ -72,6 +72,9 @@ def sample(path, label, field, sites, zq, a, moho):
     z = np.asarray(d['z'], float)
     lon, lat = np.asarray(d['Lon'], float), np.asarray(d['Lat'], float)
     ndat = np.asarray(d['Ndat'], float) if 'Ndat' in d else np.full(len(lon), np.inf)
+    if not np.nanmax(ndat, initial=0) > 0:              # all-zero Ndat = not filled in (v3 iter1)
+        print(f"  ({label}: Ndat is all 0 - no Ndat flag for this model)")
+        ndat = np.full(len(lon), np.inf)
     if zq[-1] > z[-1]:
         print(f"  ({label}: model stops at {z[-1]:g} km; deeper values left blank)")
     print(f"{label}: {os.path.basename(path)}")

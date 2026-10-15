@@ -2,7 +2,8 @@
 """
 plot_misfit_compare.py - data misfit (RMS, Fvs key 'Misfit', one value per node) of two or
 more TransD models: maps on one shared colour scale, histograms, node-by-node scatter
-(B against A at A's nodes, nearest B node within --match-deg) and per-domain medians.
+(B interpolated linearly to A's nodes - the two models need not share node locations - kept
+where a B node lies within --match-deg) and per-domain medians.
 
   source env_stage6.sh
   python3 plotting/plot_misfit_compare.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter1" \\
@@ -67,7 +68,8 @@ def main():
     ap.add_argument('--fvs', nargs='+', required=True, metavar='PATH[:LABEL]')
     ap.add_argument('--min-ndat', type=int, default=35)
     ap.add_argument('--vlim', nargs=2, type=float, default=None, help='map colour limits (default 2-98%% of all)')
-    ap.add_argument('--match-deg', type=float, default=0.15, help='node matching radius for the scatter (deg)')
+    ap.add_argument('--match-deg', type=float, default=0.3,
+                    help='scatter: use A nodes with a B node within this distance (deg)')
     ap.add_argument('--sites', default=None, help='mark study sites on the maps')
     ap.add_argument('--domains', nargs='+', default=DOMAINS)
     ap.add_argument('--tect-npz', default=None)
@@ -109,20 +111,25 @@ def main():
                  color=f'C{k}', density=True)
     axh.set_xlabel('RMS misfit', fontsize=8.5); axh.set_ylabel('density', fontsize=8.5)
     axh.legend(fontsize=8, frameon=False); axh.tick_params(labelsize=7.5)
-    # scatter B vs A at matched nodes
+    # scatter: B (interpolated to A's nodes) against A
     axs = fig.add_subplot(gs[1, n])
     if n >= 2:
         from scipy.spatial import cKDTree
         A, B = M[0], M[1]
-        dist, idx = cKDTree(np.column_stack([B['lon'], B['lat']])).query(np.column_stack([A['lon'], A['lat']]))
-        ok = dist <= a.match_deg
-        axs.scatter(A['mis'][ok], B['mis'][idx[ok]], s=4, c='0.3', lw=0, alpha=0.6)
+        from scipy.interpolate import LinearNDInterpolator
+        # different node sets: B interpolated (linear, in its triangulation) at A's nodes
+        Bi = LinearNDInterpolator(np.column_stack([B['lon'], B['lat']]), B['mis'])(A['lon'], A['lat'])
+        dist, _ = cKDTree(np.column_stack([B['lon'], B['lat']])).query(np.column_stack([A['lon'], A['lat']]))
+        ok = (dist <= a.match_deg) & np.isfinite(Bi)
+        idx = np.arange(len(A['lon']))                  # (B values now on A's nodes)
+        Bv = Bi
+        axs.scatter(A['mis'][ok], Bv[ok], s=4, c='0.3', lw=0, alpha=0.6)
         lim = [lo, hi]
         axs.plot(lim, lim, 'k--', lw=0.8)
         axs.set_xlim(lim); axs.set_ylim(lim)
-        r = np.corrcoef(A['mis'][ok], B['mis'][idx[ok]])[0, 1] if ok.sum() > 2 else np.nan
-        better = np.mean(B['mis'][idx[ok]] < A['mis'][ok]) * 100 if ok.any() else np.nan
-        axs.set_title(f"{ok.sum()} matched nodes (< {a.match_deg:g}°): r = {r:.2f}, "
+        r = np.corrcoef(A['mis'][ok], Bv[ok])[0, 1] if ok.sum() > 2 else np.nan
+        better = np.mean(Bv[ok] < A['mis'][ok]) * 100 if ok.any() else np.nan
+        axs.set_title(f"{ok.sum()} {A['label']} nodes, {B['label']} interpolated: r = {r:.2f}, "
                       f"{B['label']} lower at {better:.0f}%", fontsize=8)
         axs.set_xlabel(f"{A['label']} misfit", fontsize=8.5); axs.set_ylabel(f"{B['label']} misfit", fontsize=8.5)
     else:

@@ -108,7 +108,9 @@ class Domains:
         lon, lat = np.asarray(d['Lon'], float), np.asarray(d['Lat'], float)
         m = self.contains(key, lon, lat)
         if min_ndat and 'Ndat' in getattr(d, 'files', d):
-            m &= np.asarray(d['Ndat'], float) >= min_ndat
+            nd = np.asarray(d['Ndat'], float)
+            if np.nanmax(nd, initial=0) > 0:          # all-zero Ndat = not filled in: no filter
+                m &= nd >= min_ndat
         if footprint is not None:
             m &= footprint.contains(lon, lat)
         return m
