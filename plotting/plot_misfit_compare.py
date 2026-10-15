@@ -45,11 +45,20 @@ def load(spec, min_ndat):
     mis = np.asarray(d['Misfit'], float)
     if mis.ndim > 1:                                   # one value per node expected
         mis = np.nanmean(mis.reshape(len(lon), -1), axis=1)
-    keep = np.isfinite(mis)
+    fin = np.isfinite(mis)
+    keep = fin.copy()
     if 'Ndat' in d.files and min_ndat:
-        keep &= np.asarray(d['Ndat'], float) >= min_ndat
-    print(f"{label}: {os.path.basename(path)}  {keep.sum()} nodes, misfit median {np.nanmedian(mis[keep]):.4f}, "
-          f"10-90% {np.nanpercentile(mis[keep], 10):.4f}-{np.nanpercentile(mis[keep], 90):.4f}")
+        nd = np.asarray(d['Ndat'], float)
+        keep &= nd >= min_ndat
+        if fin.any() and not keep.any():                # Ndat on another scale (e.g. v3)
+            print(f"  ({label}: no node has Ndat >= {min_ndat} (Ndat {np.nanmin(nd):g}-{np.nanmax(nd):g}); "
+                  f"Ndat filter skipped - set --min-ndat for this model's scale)")
+            keep = fin
+    if not fin.any():
+        print(f"  ({label}: Misfit is all NaN/inf - nothing to plot)")
+    if keep.any():
+        print(f"{label}: {os.path.basename(path)}  {keep.sum()} nodes, misfit median {np.nanmedian(mis[keep]):.4f}, "
+              f"10-90% {np.nanpercentile(mis[keep], 10):.4f}-{np.nanpercentile(mis[keep], 90):.4f}")
     return dict(label=label, lon=lon[keep], lat=lat[keep], mis=mis[keep])
 
 

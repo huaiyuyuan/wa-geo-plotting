@@ -100,6 +100,11 @@ def main():
         if a.field not in F:
             sys.exit(f"{os.path.basename(path)} has no varying '{a.field}' (has: {', '.join(F)})")
         keep = np.asarray(d['Ndat'], float) >= a.min_ndat if 'Ndat' in d else np.ones(len(d['Lon']), bool)
+        if not keep.any():                              # Ndat on another scale (e.g. v3)
+            nd = np.asarray(d['Ndat'], float)
+            print(f"  ({label}: no node has Ndat >= {a.min_ndat} (Ndat {nd.min():g}-{nd.max():g}); "
+                  f"Ndat filter skipped)")
+            keep = np.ones(len(d['Lon']), bool)
         models.append(dict(label=label, lon=np.asarray(d['Lon'], float)[keep], lat=np.asarray(d['Lat'], float)[keep],
                            z=np.asarray(d['z'], float), A=np.asarray(F[a.field], float)[keep]))
         print(f"{label}: {os.path.basename(path)}, {keep.sum()} nodes with Ndat >= {a.min_ndat}")
