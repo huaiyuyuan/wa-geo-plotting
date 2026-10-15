@@ -272,8 +272,12 @@ def _natural_earth_states():
     """[(name, [ring lon/lat arrays])] of Australian states (Natural Earth 50m), or []."""
     try:
         cd = os.environ.get('CARTOPY_DATA_DIR')
-        if not cd and os.path.isdir('/data/25/yuan/mfiles/cartopy_data'):
-            cd = '/data/25/yuan/mfiles/cartopy_data'
+        if not cd:                                     # same candidates as plot_depth_slice.py
+            for c in ('/data/25/yuan/mfiles/cartopy_data', '/mnt/data64/yuan/mfiles/cartopy_data',
+                      os.path.expanduser('~/.local/share/cartopy')):
+                if os.path.isdir(c):
+                    cd = c
+                    break
         import cartopy
         if cd:
             cartopy.config['data_dir'] = cd

@@ -78,6 +78,12 @@ def main():
     a = ap.parse_args()
 
     M = [load(s, a.min_ndat) for s in a.fvs]
+    empty = [m['label'] for m in M if not len(m['mis'])]
+    if empty:
+        print(f"  left out (no finite Misfit): {', '.join(empty)}")
+    M = [m for m in M if len(m['mis'])]
+    if not M:
+        sys.exit('no model with a finite Misfit')
     allm = np.concatenate([m['mis'] for m in M])
     lo, hi = a.vlim or np.nanpercentile(allm, [2, 98])
     norm = Normalize(lo, hi)
