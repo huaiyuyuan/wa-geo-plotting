@@ -117,7 +117,7 @@ def write_tables(M, sites, zq, field, how, stem):
             f.write('depth_km,' + head + '\n')
             for i, zz in enumerate(zq):
                 f.write(f"{zz:g}," + ','.join(fmt(arr[k, i]) for k in range(len(sites))) + '\n')
-    L = M['label']
+    L = re.sub(r'[^A-Za-z0-9._-]+', '_', M['label'])       # safe in file names
     wide(f"{stem}.{L}.csv", M['P'], f"{L} {field} (km/s) at study sites, {how}; model {os.path.basename(M['path'])}")
     if M['Pe'] is not None:
         wide(f"{stem}.{L}.err.csv", M['Pe'], f"{L} posterior std of {field} (km/s) at study sites")

@@ -28,7 +28,7 @@ source /data/25/yuan/github/wa-geo-plotting/env_stage6.sh    # sets the variable
 | `FVS10` | `Fvs.iter.10.Z.npz` | Vsv, no Moho | fixed 1.73 |
 | `FVS11` | `Fvs.iter.11.Z.npz` | setup 4: Vsv + **Vp/Vs inverted**, Rayleigh only; `Vsv` is pure Vsv; band80, provisional | 1.668–1.881 |
 | `FVS12` | `Fvs.iter.12.ZT.npz` | Viso + xi (ZT); scripts derive Vsv = Viso/√((2+ξ²)/3) | fixed |
-| (v3) | band120, 25 km, 1682 nodes | final publication Vsv (queued); same keys, point `--fvs` at it | |
+| `FVSV3` | `../v3/Fvs.v3.iter.2.sm.Z.npz` | **current Vsv** (16 Oct 2026): band120 (to 60 s), 25 km, 1682 nodes, SW core only (lon ~113–125, lat ~−35 to −22.5); warm Vsv-only from a smooth REF; supersedes FVS11 and `Fvs.v3.iter.1/2.Z.npz`; 0–80 km | inverted (setup 4) |
 | | `Fvs.iter.1/3/5/6.*` | earlier runs (iter3, iter6 superseded by iter8) | 5, 6 vary |
 
 Check what varies in any model:
@@ -342,7 +342,8 @@ python3 plotting/plot_site_columns.py --shallow <folder or station_files.zip> \
 
 ---------------------------------------------------------------------------------------
 ## 7e. v3 vs v2 (iter2): maps, sites, domains, sections, misfit
-`$FVSV3` = `ASDF.processing/v3/Fvs.v3.iter.1.Z.npz` (set in env_stage6.sh).
+`$FVSV3` = `ASDF.processing/v3/Fvs.v3.iter.2.sm.Z.npz` (set in env_stage6.sh; see 7g for the
+same commands with the current folder names). Older v3 runs: export FVSV3=... before running.
 ```bash
 mkdir -p $FIG/compare_v3_iter2
 python3 plotting/plot_map_compare.py --models $FVSV3:"v3 iter1" $FVS2:"v2 iter2" --mode abs \
@@ -361,6 +362,57 @@ python3 plotting/plot_misfit_compare.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter1"
 ```
 Misfit caveat: the two models fit different data (band80 vs band120 maps), so compare the
 patterns more than the absolute levels.
+
+---------------------------------------------------------------------------------------
+## 7f. Data and synthetics at the 19 sites, two models
+```bash
+# v3 iter2.sm alone (files on d204403)
+python3 plotting/plot_site_fits.py \
+    --model "v3 iter2.sm" "$V3/IN/Data_SWD.in.*" "$V3/OUT.iter.2.sm.Z/data_bestd.out*" \
+    --out $FIG/v3_iter2sm/site_fits.png
+# with v2 iter2 (needs the band80 IN/ pulled from Setonix into $ST/IN/)
+python3 plotting/plot_site_fits.py \
+    --model "v2 iter2"    "$ST/IN/Data_SWD.in.*" "$ST/OUT.iter.2.Z/data_bestd.out*" \
+    --model "v3 iter2.sm" "$V3/IN/Data_SWD.in.*" "$V3/OUT.iter.2.sm.Z/data_bestd.out*" \
+    --out $FIG/compare_v3sm_iter2/site_fits.png
+```
+Nodes are matched by the 'x.<lon>.y.<lat>' in the file paths (nearest node to each site).
+Data blue / synthetics red (model 1), data green / synthetics magenta (model 2); phase solid,
+group dashed; RMS per model on each panel and in <stem>.rms.txt. --syn-order if the synthetic
+file does not have the period last.
+
+---------------------------------------------------------------------------------------
+## 7g. Current model v3 iter2.sm ($FVSV3): sites, slices, domains, comparison with v2 iter2
+Footprint is the SW core: sites in the N/E (e.g. Burtville, ~120 km from a node) are flagged
+(> --max-km 50) and drawn hatched/greyed; --skip-flagged leaves them out of the profile plots.
+```bash
+source env_stage6.sh; O=$FIG/v3_iter2sm; C=$FIG/compare_v3sm_iter2; mkdir -p $O $C
+# --- v3 alone ---
+python3 plotting/plot_site_depth_maps.py --fvs $FVSV3:"v3 iter2.sm" --depths 5 20 35 45 60 80 \
+    --extent wa --out $O/site_depth_maps.png                                     # + --rel for dVsv %
+python3 plotting/plot_site_profiles.py --fvs $FVSV3:"v3 iter2.sm" --moho $MOHO --z-max 60 --slide \
+    --out $O/site_vsv.slide.png
+python3 plotting/plot_site_profiles.py --fvs $FVSV3:"v3 iter2.sm" --ref-domain yilgarn --z-max 60 \
+    --slide --out $O/site_vsv.dv.slide.png
+python3 plotting/plot_site_columns.py --fvs $FVSV3:"v3 iter2.sm" --bins 3.0 4.5 0.25 --z-max 50 \
+    --moho $MOHO --out $O/site_columns.png
+python3 plotting/plot_domain_profiles.py --fvs $FVSV3:"v3 iter2.sm" --domains dispersion --fields vsv \
+    --coverage --rel-to wac --moho $MOHO --d-max 60 --sites examples/yilgarn_sites_19.txt \
+    --stations $ST/stations.phases.1.2.3.txt --out $O/domain_vsv.png
+python3 plotting/plot_site_fits.py --model "v3 iter2.sm" "$V3/IN/Data_SWD.in.*" \
+    "$V3/OUT.iter.2.sm.Z/data_bestd.out*" --out $O/site_fits.png
+# --- against v2 iter2 ---
+python3 plotting/plot_site_profiles.py --fvs $FVS2:"v2 iter2" --fvs2 $FVSV3:"v3 iter2.sm" --moho $MOHO \
+    --z-max 60 --slide --out $C/site_vsv.iter2_v3sm.slide.png
+python3 plotting/plot_site_depth_maps.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter2.sm" \
+    --depths 5 20 35 45 60 --extent wa --out $C/site_depth_maps.png
+python3 plotting/plot_map_compare.py --models $FVSV3:"v3 iter2.sm" $FVS2:"v2 iter2" --mode abs \
+    --depths 5 20 35 45 60 --no-footprint --out-dir $C                          # also --mode rel
+python3 plotting/plot_domain_profiles.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter2.sm" --domains dispersion \
+    --fields vsv --coverage --rel-to wac --moho $MOHO --d-max 60 --out $C/domain_vsv.png
+python3 plotting/plot_misfit_compare.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter2.sm" \
+    --sites examples/yilgarn_sites_19.txt --out $C/misfit.png
+```
 
 ---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)

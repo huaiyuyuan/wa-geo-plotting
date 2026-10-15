@@ -31,8 +31,11 @@ export FVS8=$ST/Fvs.iter.8.ZT.npz                 # radial anisotropy: Vsv pinne
 export FVS10=$ST/Fvs.iter.10.Z.npz                # Vsv, no Moho
 export FVS11=$ST/Fvs.iter.11.Z.npz                # setup 4: Vsv + Vp/Vs, Rayleigh only; band80, provisional
 export FVS12=$ST/Fvs.iter.12.ZT.npz               # Viso + xi (ZT); scripts derive Vsv = Viso/sqrt((2+xi^2)/3)
-# v3 (band120): final publication Vsv once converged; iter1 = first run (15 Oct 2026)
-export FVSV3=${FVSV3:-$(dirname $ST)/v3/Fvs.v3.iter.1.Z.npz}
+# v3 (band120, 25 km, 1682 nodes, SW core only): current model = iter2.sm (16 Oct 2026),
+# warm Vsv-only (setup 4) iteration from the smooth, kink-free REF; supersedes FVS11 and the
+# first v3 runs Fvs.v3.iter.1/2.Z.npz (AK135 REF, crustal kinks). Depth 0-80 km.
+export V3=${V3:-$(dirname $ST)/v3}
+export FVSV3=${FVSV3:-$V3/Fvs.v3.iter.2.sm.Z.npz}
 
 # surface-wave maps (v3b band120 iter-2): $V3B/{Z,T}/{group,phase}_v_tomo/TransD.region.*.npz
 # coverage mask: footprint npz key 'density' (config.FOOTPRINT_NPZ)

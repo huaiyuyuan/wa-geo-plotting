@@ -276,34 +276,72 @@ def upsample(lat, lon, z, m, factor=4):
 
 
 # ----------------------------------------------------------------------------- map frame
-def _natural_earth_states():
-    """[(name, [ring lon/lat arrays])] of Australian states (Natural Earth 50m), or []."""
+def _ne_dirs():
+    out = [os.environ.get('CARTOPY_DATA_DIR', '')]
+    out += ['/data/25/yuan/mfiles/cartopy_data', '/mnt/data64/yuan/mfiles/cartopy_data',
+            os.path.expanduser('~/.local/share/cartopy')]
     try:
-        cd = os.environ.get('CARTOPY_DATA_DIR')
-        if not cd:                                     # same candidates as plot_depth_slice.py
-            for c in ('/data/25/yuan/mfiles/cartopy_data', '/mnt/data64/yuan/mfiles/cartopy_data',
-                      os.path.expanduser('~/.local/share/cartopy')):
-                if os.path.isdir(c):
-                    cd = c
-                    break
         import cartopy
-        if cd:
-            cartopy.config['pre_existing_data_dir'] = cd   # read-only copy (what the env var sets)
-            cartopy.config['data_dir'] = cd
+        out += [cartopy.config.get('pre_existing_data_dir', ''), cartopy.config.get('data_dir', '')]
+    except Exception:
+        pass
+    return [d for d in dict.fromkeys(out) if d and os.path.isdir(d)]
+
+
+def _ne_file(category, name, res=('50m', '110m', '10m')):
+    """Path of a Natural Earth shapefile already on disk (never downloads), or None."""
+    for d in _ne_dirs():
+        for r in res:
+            p = os.path.join(d, 'shapefiles', 'natural_earth', category, f'ne_{r}_{name}.shp')
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def _shp_reader(path):
+    try:
         import cartopy.io.shapereader as shpreader
-        shp = shpreader.natural_earth('50m', 'cultural', 'admin_1_states_provinces')
-        out = []
-        for rec in shpreader.Reader(shp).records():
-            if rec.attributes.get('admin', '') != 'Australia':
-                continue
-            g = rec.geometry
-            polys = list(g.geoms) if hasattr(g, 'geoms') else [g]
-            out.append((rec.attributes.get('name', ''),
-                        [np.asarray(p.exterior.coords) for p in polys]))
-        return out
+        return shpreader.Reader(path)
+    except Exception:
+        return None
+
+
+def _natural_earth_states():
+    """dict(states=[(name, [rings])], coast=[lines]) from Natural Earth files on disk.
+    States (admin_1) when present; otherwise the coastline only (+ the 129E WA border is
+    drawn by MapFrame). Nothing is downloaded (d204403 has no internet)."""
+    out = dict(states=[], coast=[], src='none')
+    try:
+        p = _ne_file('cultural', 'admin_1_states_provinces') or \
+            _ne_file('cultural', 'admin_1_states_provinces_lakes')
+        rd = _shp_reader(p) if p else None
+        if rd is not None:
+            for rec in rd.records():
+                if rec.attributes.get('admin', '') != 'Australia':
+                    continue
+                g = rec.geometry
+                polys = list(g.geoms) if hasattr(g, 'geoms') else [g]
+                out['states'].append((rec.attributes.get('name', ''),
+                                      [np.asarray(q.exterior.coords) for q in polys]))
+            out['src'] = os.path.basename(p)
+            return out
+        p = _ne_file('physical', 'coastline') or _ne_file('physical', 'land')
+        rd = _shp_reader(p) if p else None
+        if rd is not None:
+            for g in rd.geometries():
+                b = g.bounds
+                if b[2] < 105 or b[0] > 160 or b[3] < -50 or b[1] > 0:
+                    continue
+                parts = list(g.geoms) if hasattr(g, 'geoms') else [g]
+                for q in parts:
+                    xy = np.asarray(q.exterior.coords if hasattr(q, 'exterior') else q.coords)
+                    out['coast'].append(xy)
+            out['src'] = os.path.basename(p) + ' (no admin_1 states on disk: 129E border drawn)'
+            return out
+        print(f"  (no Natural Earth files found under: {', '.join(_ne_dirs()) or 'nothing'})")
     except Exception as e:
-        print(f"  (no Natural Earth coastline/states: {e})")
-        return []
+        print(f"  (Natural Earth not readable: {e})")
+    return out
 
 
 _STATES = None
@@ -331,8 +369,18 @@ class MapFrame:
         if _STATES is None:
             _STATES = _natural_earth_states()
         from matplotlib.patches import Polygon
-        self.has_coast = bool(_STATES)
-        for name, rings in _STATES:
+        self.has_coast = bool(_STATES['states'] or _STATES['coast'])
+        if not getattr(MapFrame, '_reported', False):
+            print(f"  map base: {_STATES['src']}")
+            MapFrame._reported = True
+        for r in _STATES['coast']:                     # coastline only (no admin_1 on disk)
+            x, y = self.xy(r[:, 0], r[:, 1])
+            ax.plot(x, y, color='k', lw=0.6, zorder=6)
+        if _STATES['coast'] and not _STATES['states']:  # WA-NT/SA border: the 129th meridian
+            bl = np.linspace(-31.69, -14.87, 50)
+            x, y = self.xy(np.full_like(bl, 129.0), bl)
+            ax.plot(x, y, color='k', lw=0.6, zorder=6)
+        for name, rings in _STATES['states']:
             wa = name == 'Western Australia'
             for r in rings:
                 x, y = self.xy(r[:, 0], r[:, 1])
