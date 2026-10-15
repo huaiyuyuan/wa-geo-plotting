@@ -341,6 +341,28 @@ python3 plotting/plot_site_columns.py --shallow <folder or station_files.zip> \
 ```
 
 ---------------------------------------------------------------------------------------
+## 7e. v3 vs v2 (iter2): maps, sites, domains, sections, misfit
+`$FVSV3` = `ASDF.processing/v3/Fvs.v3.iter.1.Z.npz` (set in env_stage6.sh).
+```bash
+mkdir -p $FIG/compare_v3_iter2
+python3 plotting/plot_map_compare.py --models $FVSV3:"v3 iter1" $FVS2:"v2 iter2" --mode abs \
+    --depths 5 20 35 45 60 --no-footprint --out-dir $FIG/compare_v3_iter2       # also --mode rel
+python3 plotting/plot_site_depth_maps.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter1" \
+    --depths 5 20 35 45 60 --extent wa --out $FIG/compare_v3_iter2/site_depth_maps.png
+python3 plotting/plot_site_profiles.py --fvs $FVS2 --fvs2 $FVSV3:v3 --moho $MOHO --z-max 60 --slide \
+    --out $FIG/compare_v3_iter2/site_vsv.iter2_v3.slide.png
+python3 plotting/plot_domain_profiles.py --fvs $FVS2:iter2 $FVSV3:v3 --domains dispersion --fields vsv \
+    --coverage --rel-to wac --moho $MOHO --d-max 60 --out $FIG/compare_v3_iter2/domain_vsv.iter2_v3.png
+python3 plotting/plot_xsection_compare.py --models $FVSV3:"v3 iter1" $FVS2:"v2 iter2" \
+    --load-sections $XS --rows abs rel --diff --moho $MOHO --out-dir $FIG/compare_v3_iter2
+# data misfit per node: maps (shared scale), histograms, node-by-node scatter, per-domain medians
+python3 plotting/plot_misfit_compare.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter1" \
+    --sites examples/yilgarn_sites_19.txt --out $FIG/compare_v3_iter2/misfit.png
+```
+Misfit caveat: the two models fit different data (band80 vs band120 maps), so compare the
+patterns more than the absolute levels.
+
+---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)
 
 ```bash
