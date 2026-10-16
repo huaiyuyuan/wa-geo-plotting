@@ -34,8 +34,8 @@ export FVS12=$ST/Fvs.iter.12.ZT.npz               # Viso + xi (ZT); scripts deri
 # v3 (band120, 25 km, 1682 nodes, SW core only): current model = iter2.sm (16 Oct 2026),
 # warm Vsv-only (setup 4) iteration from the smooth, kink-free REF; supersedes FVS11 and the
 # first v3 runs Fvs.v3.iter.1/2.Z.npz (AK135 REF, crustal kinks). Depth 0-80 km.
-export V3=${V3:-$(dirname $ST)/v3}
-export FVSV3=${FVSV3:-$V3/Fvs.v3.iter.2.sm.Z.npz}
+export V3=$(dirname $ST)/v3
+export FVSV3=$V3/Fvs.v3.iter.2.sm.Z.npz            # set every time: an old exported value no longer sticks
 
 # surface-wave maps (v3b band120 iter-2): $V3B/{Z,T}/{group,phase}_v_tomo/TransD.region.*.npz
 # coverage mask: footprint npz key 'density' (config.FOOTPRINT_NPZ)
