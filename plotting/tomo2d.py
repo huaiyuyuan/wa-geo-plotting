@@ -565,3 +565,10 @@ def nearest_cell(lat, lon, plat, plon):
     i = np.clip(np.rint((np.asarray(plat) - lat[0]) / (lat[1] - lat[0])).astype(int), 0, len(lat) - 1)
     j = np.clip(np.rint((np.asarray(plon) - lon[0]) / (lon[1] - lon[0])).astype(int), 0, len(lon) - 1)
     return i, j
+
+
+def source_note(fig, paths, y=0.003):
+    """Small grey footer naming the model files a figure was made from (catches wrong-file plots)."""
+    names = [os.path.basename(str(p)) for p in paths if p]
+    if names:
+        fig.text(0.995, y, 'model: ' + ', '.join(names), ha='right', va='bottom', fontsize=6, color='0.45')

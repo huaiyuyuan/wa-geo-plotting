@@ -144,6 +144,7 @@ def main():
     fig.suptitle('TransD data misfit per node (lower = better fit to its own dispersion data; '
                  'models fit different data sets)', fontsize=11)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    t2.source_note(fig, [model_label(s)[0] for s in a.fvs])
     fig.savefig(a.out, dpi=220); fig.savefig(os.path.splitext(a.out)[0] + '.pdf')
     plt.close(fig)
     print(f"Saved {a.out} (+ .pdf)")

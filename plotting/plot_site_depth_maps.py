@@ -228,6 +228,7 @@ def main():
                  + f" at {', '.join(f'{d:g}' for d in a.depths)} km - {len(sites)} study sites (numbers as in "
                  f"{os.path.basename(a.sites)})", fontsize=10.5, y=1 - 0.15 / H)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    t2.source_note(fig, [model_label(s)[0] for s in a.fvs])
     fig.savefig(a.out, dpi=220); fig.savefig(os.path.splitext(a.out)[0] + '.pdf', dpi=220)
     plt.close(fig)
     print(f"Saved {a.out} (+ .pdf)")

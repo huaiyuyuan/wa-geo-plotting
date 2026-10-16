@@ -196,6 +196,8 @@ def main():
              ha='center', va='bottom', fontsize=8, color='0.3')
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    if not a.shallow:
+        t2.source_note(fig, [model_label(a.fvs)[0]])
     fig.savefig(a.out, dpi=220); fig.savefig(os.path.splitext(a.out)[0] + '.pdf')
     plt.close(fig)
     print(f"Saved {a.out} (+ .pdf)")
