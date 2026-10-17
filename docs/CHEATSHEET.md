@@ -415,6 +415,19 @@ python3 plotting/plot_misfit_compare.py --fvs $FVS2:"v2 iter2" $FVSV3:"v3 iter2.
 ```
 
 ---------------------------------------------------------------------------------------
+## 7h. Dispersion maps from the TransD inputs/outputs (rows = data sets, columns = periods)
+Observed (Data_SWD.in, period first) and best-fit synthetics (data_bestd.out, period last)
+mapped like the depth slices; --resid adds synthetic - observed rows (RMS on each map).
+```bash
+A=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing
+python3 plotting/plot_site_period_maps.py --comp cR --periods 10 20 30 50 \
+    --data "observed (v3 IN)" "$A/v3/IN/Data_SWD.in.*" \
+    --syn  "v3 iter2.sm"      "$A/v3/OUT.iter.2.sm.Z/data_bestd.out*" \
+    --syn  "v3c iter3"        "$A/v3c/<OUT dir>/data_bestd.out*" \
+    --resid --out $FIG/v3c_iter3/vs_v3/period_maps.cR.png        # --comp uR for group; --rel for %
+```
+
+---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)
 
 ```bash
