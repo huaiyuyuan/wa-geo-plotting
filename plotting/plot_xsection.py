@@ -348,6 +348,11 @@ def _xi_ref_label(mode):
 
 
 # ── Fvs loading (optionally converting Viso -> true Vsv) ──────────────────────
+XI_SQ = False                 # --xi-squared: show conventional xi = (Vsh/Vsv)^2 = Xi^2
+XI_LIM = (0.90, 1.10)
+XI_TITLE = 'xi = Vsh/Vsv (blue = Vsh>Vsv)'
+
+
 def _load_fvs(path, vel='model'):
     """Fvs npz as a dict. vel='vsv_true' replaces the 'Vsv' array of an xi (ZT) model
     (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi^2)/3), xi = Vsh/Vsv.
@@ -360,6 +365,8 @@ def _load_fvs(path, vel='model'):
                      f"the 'Vsv' array already is Vsv")
         d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
         d['_vel'] = 'vsv_true'
+    if XI_SQ and 'Xi' in d:                  # after the Vsv conversion, which needs linear Xi
+        d['Xi'] = np.asarray(d['Xi'], float) ** 2
     return d
 
 
@@ -541,8 +548,8 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
                 f'{vname} vs {_REF["label"]} (%)',
                 title=f'{vname}: this model vs {_REF["label"]} (%)  (blue = faster here)'); r += 1
     if have_xi and xi_panel in ('xi', 'both'):
-        _pcolor(axes[r], xi_p, _cmap('RdBu', ncolors), 0.90, 1.10,
-                'xi', title='xi = Vsh/Vsv (blue = Vsh>Vsv)'); r += 1
+        _pcolor(axes[r], xi_p, _cmap('RdBu', ncolors), XI_LIM[0], XI_LIM[1],
+                'xi', title=XI_TITLE); r += 1
     if dxi_p is not None:
         _pcolor(axes[r], dxi_p, _cmap('RdBu', ncolors), -clim_xi, clim_xi,
                 'dlnXi (%)', title=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'); r += 1
@@ -1089,7 +1096,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             return med - sigma_vsv * sd, med + sigma_vsv * sd
         if f == 'err':
             fv = data[np.isfinite(data)]; return 0, np.nanpercentile(fv, 90)
-        return {'dvsv': (-clim_rel, clim_rel), 'xi': (0.90, 1.10), 'dxi': (-clim_xi, clim_xi),
+        return {'dvsv': (-clim_rel, clim_rel), 'xi': XI_LIM, 'dxi': (-clim_xi, clim_xi),
                 'dvpvs': (-clim_vpvs, clim_vpvs), 'vdiff': (-clim_diff, clim_diff)}.get(f, (vmin, vmax))
 
     n=len(prof)
@@ -1193,6 +1200,8 @@ def main():
                          'Combine with --save-sections FILE (old file kept as FILE.bak.<time>)')
     ap.add_argument('--moho',      default=None,
                     help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
+    ap.add_argument('--xi-squared', action='store_true',
+                    help='show conventional xi = (Vsh/Vsv)^2 (the Fvs Xi is linear Vsh/Vsv), 0.88-1.12')
     ap.add_argument('--xi-panel', default='xi', choices=['xi', 'dxi', 'both'],
                     help='per-section xi row(s): xi, dlnXi, or both (ZT models)')
     ap.add_argument('--xi-ref', default='depth', choices=['depth', 'global'],
@@ -1305,6 +1314,10 @@ def main():
     ap.add_argument('--bnd-npz',   default=None, help='override crustal-boundaries npz')
     ap.add_argument('--out-dir',   default='figures/xsections')
     args = ap.parse_args()
+    if args.xi_squared:
+        global XI_SQ, XI_LIM, XI_TITLE
+        XI_SQ, XI_LIM = True, (0.88, 1.12)
+        XI_TITLE = 'xi = (Vsh/Vsv)$^2$ (blue = Vsh>Vsv)'
     MAX_NODE_DIST = args.max_node_dist
 
     global _GEO

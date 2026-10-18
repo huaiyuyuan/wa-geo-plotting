@@ -71,6 +71,8 @@ def main():
     ap.add_argument('--match-deg', type=float, default=0.3,
                     help='scatter: use A nodes with a B node within this distance (deg)')
     ap.add_argument('--sites', default=None, help='mark study sites on the maps')
+    ap.add_argument('--density', action='store_true',
+                    help='histogram as density (default: number of nodes per bin)')
     ap.add_argument('--domains', nargs='+', default=DOMAINS)
     ap.add_argument('--tect-npz', default=None)
     ap.add_argument('--extent', default='112,129.6,-35.8,-13.2')
@@ -113,9 +115,10 @@ def main():
     axh = fig.add_subplot(gs[0, n])
     bins = np.linspace(lo, hi, 40)
     for k, m in enumerate(M):
-        axh.hist(np.clip(m['mis'], lo, hi), bins=bins, histtype='step', lw=1.6, label=m['label'],
-                 color=f'C{k}', density=True)
-    axh.set_xlabel('RMS misfit', fontsize=8.5); axh.set_ylabel('density', fontsize=8.5)
+        axh.hist(np.clip(m['mis'], lo, hi), bins=bins, histtype='step', lw=1.6,
+                 label=f"{m['label']} ({len(m['mis'])} nodes)", color=f'C{k}', density=a.density)
+    axh.set_xlabel('RMS misfit (km/s)', fontsize=8.5)
+    axh.set_ylabel('density' if a.density else 'number of nodes', fontsize=8.5)
     axh.legend(fontsize=8, frameon=False); axh.tick_params(labelsize=7.5)
     # scatter: B (interpolated to A's nodes) against A
     axs = fig.add_subplot(gs[1, n])

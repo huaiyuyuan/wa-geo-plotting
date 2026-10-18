@@ -445,6 +445,13 @@ python3 plotting/plot_site_depth_maps.py --fvs $XI:"v3c xi" --field xi2 --depths
 python3 plotting/plot_site_columns.py    --fvs $XI:"v3c xi" --field xi2 --z-max 60 --out $O/site_xi_columns.png
 python3 plotting/plot_site_depth_maps.py --fvs $VP:"v3c Vp/Vs" --field vpvs --cmap RdBu_r --vlim 1.70 1.82 \
     --depths 10 20 30 50 --out $O/vpvs_depth_maps.png
+# sections: Vsv (Z run) and true Vsv + conventional xi (ZT run, --xi-squared)
+python3 plotting/plot_xsection.py --fvs $VS --load-sections $XS --stack vsv,dvsv --d-max 60 --out-dir $O/xs
+python3 plotting/plot_xsection.py --fvs $XI --vel vsv_true --load-sections $XS --stack xi --xi-squared \
+    --d-max 60 --out-dir $O/xs
+# misfit maps + histogram (y = number of nodes; --density for density), SW-core extent
+python3 plotting/plot_misfit_compare.py --fvs $VS:"v3c Vsv (Z)" $XI:"v3c xi (ZT)" \
+    --sites examples/yilgarn_sites_19.txt --extent 112,126.5,-35.8,-21.5 --out $O/misfit.png
 python3 plotting/plot_site_fits.py --model "v3c Vsv (Z)" "$A/v3c/IN_v3nodes/Data_SWD.in.*" "$A/v3c/OUT.iter.3.Z/data_bestd.out*" \
     --model "v3c xi (ZT)" "$A/v3c/IN_v3nodes_ZT/Data_SWD.in.*" "$A/v3c/OUT.iter.4.ZT/data_bestd.out*" --out $O/site_fits.png
 ```
