@@ -203,6 +203,8 @@ def main():
     ap.add_argument('--clim-rel', type=float, default=6.0)
     ap.add_argument('--clim-diff', type=float, default=4.0)
     ap.add_argument('--ncolors', type=int, default=16)
+    ap.add_argument('--abs-skip', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
+                    help='absolute colour bar without the pale yellow middle of Spectral (e.g. 0.36 0.70)')
     ap.add_argument('--strips', nargs='?', const=px._STRIPS_DEFAULT,
                     default=px._STRIPS_DEFAULT,
                     help='geology strips (default domain,boundaries,names; add litho for the '
@@ -216,6 +218,8 @@ def main():
     ap.add_argument('--nproc', type=int, default=1)
     ap.add_argument('--out-dir', default='figures/compare')
     a = ap.parse_args()
+    if a.abs_skip:
+        px.ABS_SKIP = tuple(a.abs_skip)
     a.moho_mask = None if a.no_moho_mask else a.moho_mask_alpha
 
     print('Models:')

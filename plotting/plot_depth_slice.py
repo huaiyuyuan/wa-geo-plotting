@@ -207,6 +207,7 @@ DIV_GAP = 0.20
 DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) stays continuous
 
 
+ABS_SKIP = None     # (LO, HI) part of Spectral left out of absolute maps, e.g. (0.36, 0.70); --abs-skip
 DIV_WHITE = 0.5     # neutral (white) band width in colour steps (0.5 = half a step); --div-white
 
 
@@ -225,6 +226,13 @@ def _cmap(name, n=32):
         hi = np.repeat(base(np.linspace(0.5 + DIV_GAP, 1.0, side)), f, axis=0)
         mid = np.repeat(np.asarray(base(0.5))[None, :], kw, axis=0)
         return ListedColormap(np.vstack([lo, mid, hi]), name=f'{name}_gap')
+    if name == 'Spectral' and ABS_SKIP:                    # --abs-skip LO HI: drop the pale middle
+        from matplotlib.colors import ListedColormap
+        base = matplotlib.colormaps[name]
+        lo, hi = ABS_SKIP
+        na = int(round(n * lo / (lo + 1.0 - hi))); nb = n - na
+        return ListedColormap(np.vstack([base(np.linspace(0.0, lo, na)), base(np.linspace(hi, 1.0, nb))]),
+                              name='Spectral_skip')
     try:
         return matplotlib.colormaps[name].resampled(n)
     except Exception:

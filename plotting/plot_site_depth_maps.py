@@ -78,6 +78,8 @@ def main():
                          'blank = no colour outside it, none = ignore')
     ap.add_argument('--veil-alpha', type=float, default=0.6)
     ap.add_argument('--veil-colour', default='white')
+    ap.add_argument('--abs-skip', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
+                    help='Vsv maps without the pale yellow middle of Spectral (e.g. 0.36 0.70)')
     ap.add_argument('--cmap', default=None,
                     help='colour map (e.g. RdBu_r for Vp/Vs centred on --vlim); default by field')
     ap.add_argument('--footprint', default=None)
@@ -177,6 +179,10 @@ def main():
     # centre; Vp/Vs viridis
     # xi around 1: RdBu_r (red = Vsh > Vsv, blue = Vsv > Vsh), as plot_depth_slice.py
     cmap = {'vpvs': matplotlib.colormaps['viridis']}.get(a.field, matplotlib.colormaps['Spectral'])
+    if a.abs_skip and a.field in ('vsv', 'viso') and not a.rel:
+        import plot_depth_slice as pds
+        pds.ABS_SKIP = tuple(a.abs_skip)
+        cmap = pds._cmap('Spectral', 16)
     name = a.cmap or ('RdBu' if a.rel else 'RdBu_r' if a.field in ('xi', 'xi2') else None)
     if name:
         try:
