@@ -428,6 +428,28 @@ python3 plotting/plot_site_period_maps.py --comp cR --periods 10 20 30 50 \
 ```
 
 ---------------------------------------------------------------------------------------
+## 7i. v3c models (band120 data to 44 s, monotonic-culled; warm from v3 iter2.sm)
+| file (`$A/v3c/`) | setup | plot as | synthetics / observed |
+|---|---|---|---|
+| `Fvs.v3c.iter.3.Z.npz`  | 4 | `--field vsv` (Spectral) | `OUT.iter.3.Z/` / `IN_v3nodes/` |
+| `Fvs.v3c.iter.4.Z.npz`  | 4 | `--field vpvs --cmap RdBu_r --vlim 1.70 1.82` (near prior; needs RFs) | `OUT.iter.4.Z/` / `IN_v3nodes/` |
+| `Fvs.v3c.iter.4.ZT.npz` | 3 | `--field xi2` = (Vsh/Vsv)^2, 0.88-1.12, RdBu_r (red = Vsh > Vsv); `--field vsv` = true Vsv | `OUT.iter.4.ZT/` / `IN_v3nodes_ZT/` |
+Stored `Xi` = Vsh/Vsv (linear): `--field xi` shows it (0.9-1.1); `xi2` is the conventional xi.
+Depth: data stop at 44 s (phase) / 40 s (group) -> trust to ~50 km, show <= 60 km; 80 km is the
+output edge (d_max 120), do not plot it.
+```bash
+A=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing; O=$FIG/v3c; mkdir -p $O
+XI=$A/v3c/Fvs.v3c.iter.4.ZT.npz; VP=$A/v3c/Fvs.v3c.iter.4.Z.npz; VS=$A/v3c/Fvs.v3c.iter.3.Z.npz
+python3 plotting/plot_site_profiles.py   --fvs $XI:"v3c xi" --field xi2 --z-max 60 --slide --out $O/site_xi.slide.png
+python3 plotting/plot_site_depth_maps.py --fvs $XI:"v3c xi" --field xi2 --depths 10 20 30 50 --out $O/xi_depth_maps.png
+python3 plotting/plot_site_columns.py    --fvs $XI:"v3c xi" --field xi2 --z-max 60 --out $O/site_xi_columns.png
+python3 plotting/plot_site_depth_maps.py --fvs $VP:"v3c Vp/Vs" --field vpvs --cmap RdBu_r --vlim 1.70 1.82 \
+    --depths 10 20 30 50 --out $O/vpvs_depth_maps.png
+python3 plotting/plot_site_fits.py --model "v3c Vsv (Z)" "$A/v3c/IN_v3nodes/Data_SWD.in.*" "$A/v3c/OUT.iter.3.Z/data_bestd.out*" \
+    --model "v3c xi (ZT)" "$A/v3c/IN_v3nodes_ZT/Data_SWD.in.*" "$A/v3c/OUT.iter.4.ZT/data_bestd.out*" --out $O/site_fits.png
+```
+
+---------------------------------------------------------------------------------------
 ## 8. Basemap caches (only when the GSWA data change)
 
 ```bash

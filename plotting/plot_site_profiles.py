@@ -41,7 +41,8 @@ sys.path.insert(0, os.path.join(_HERE, '..', 'basemap'))
 import tomo2d as t2                                           # noqa: E402
 from domains import model_fields                              # noqa: E402
 
-LABEL = {'vsv': 'Vsv (km/s)', 'viso': 'Viso (km/s)', 'xi': 'xi = Vsh/Vsv', 'vpvs': 'Vp/Vs'}
+LABEL = {'vsv': 'Vsv (km/s)', 'viso': 'Viso (km/s)', 'xi': 'Xi = Vsh/Vsv', 'xi2': 'xi = (Vsh/Vsv)^2',
+         'vpvs': 'Vp/Vs'}
 
 
 def gc_km(lon1, lat1, lon2, lat2):
@@ -187,7 +188,7 @@ def main():
             M['Pe'] = M['Pe'][keep] if M['Pe'] is not None else None
             M['info'] = [M['info'][k] for k in keep]
     allP = np.concatenate([M1['P'].ravel()] + ([M2['P'].ravel()] if M2 else []))
-    xl = a.xlim or ((0.9, 1.1) if a.field == 'xi' else
+    xl = a.xlim or ({'xi': (0.9, 1.1), 'xi2': (0.88, 1.12)}.get(a.field) or
                     (np.floor(np.nanmin(allP) * 5) / 5, np.ceil(np.nanmax(allP) * 5) / 5))
 
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
@@ -216,7 +217,7 @@ def main():
                 + (f" / {M2['info'][k]['dist']:.0f} km" if M2 and abs(M2['info'][k]['dist'] - info[k]['dist']) > 0.5
                    else '') + (f"\n{flags}" if flags else ''),
                 transform=ax.transAxes, fontsize=6.3, va='bottom', color='#b03a2e' if flags else '0.35')
-        if a.field == 'xi':
+        if a.field in ('xi', 'xi2'):
             ax.axvline(1.0, color='0.4', lw=0.7, ls='--')
         ax.grid(True, lw=0.3, color='0.85'); ax.tick_params(labelsize=7)
     for ax in list(axs.flat)[ns:]:

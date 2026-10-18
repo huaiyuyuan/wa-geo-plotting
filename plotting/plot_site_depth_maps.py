@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(_HERE, '..', 'basemap'))
 import tomo2d as t2                                           # noqa: E402
 from domains import model_fields, Domains                     # noqa: E402
 
-LABEL = {'vsv': 'Vsv', 'viso': 'Viso', 'xi': 'xi', 'vpvs': 'Vp/Vs'}
+LABEL = {'vsv': 'Vsv', 'viso': 'Viso', 'xi': 'Xi (Vsh/Vsv)', 'xi2': 'xi = (Vsh/Vsv)^2', 'vpvs': 'Vp/Vs'}
 
 
 def model_label(spec):
@@ -78,6 +78,8 @@ def main():
                          'blank = no colour outside it, none = ignore')
     ap.add_argument('--veil-alpha', type=float, default=0.6)
     ap.add_argument('--veil-colour', default='white')
+    ap.add_argument('--cmap', default=None,
+                    help='colour map (e.g. RdBu_r for Vp/Vs centred on --vlim); default by field')
     ap.add_argument('--footprint', default=None)
     ap.add_argument('--vlim', nargs='+', type=float, default=None,
                     help='colour limits per depth: lo1 hi1 lo2 hi2 ... (abs) or L1 L2 ... (--rel, +-L)')
@@ -139,10 +141,14 @@ def main():
         if a.rel:
             L = a.vlim[j] if a.vlim and len(a.vlim) > j else max(0.5, 0.5 * np.ceil(np.nanpercentile(np.abs(allv), 98) / 0.5))
             lims.append((-L, L))
+        elif a.vlim and len(a.vlim) == 2:              # one LO HI for every depth
+            lims.append((a.vlim[0], a.vlim[1]))
         elif a.vlim and len(a.vlim) >= 2 * (j + 1):
             lims.append((a.vlim[2 * j], a.vlim[2 * j + 1]))
         elif a.field == 'xi':                          # diverging around 1.0, fixed 0.9-1.1
             lims.append((0.9, 1.1))
+        elif a.field == 'xi2':
+            lims.append((0.88, 1.12))
         else:
             lo_, hi_ = np.nanpercentile(allv, [2, 98])
             q = 100 if a.field == 'vpvs' else 20
@@ -169,13 +175,15 @@ def main():
     fig = plt.figure(figsize=(W, H))
     # house rules: absolute velocity Spectral (warm = slow); xi and relative RdBu with a white
     # centre; Vp/Vs viridis
+    # xi around 1: RdBu_r (red = Vsh > Vsv, blue = Vsv > Vsh), as plot_depth_slice.py
     cmap = {'vpvs': matplotlib.colormaps['viridis']}.get(a.field, matplotlib.colormaps['Spectral'])
-    if a.rel or a.field == 'xi':
+    name = a.cmap or ('RdBu' if a.rel else 'RdBu_r' if a.field in ('xi', 'xi2') else None)
+    if name:
         try:
             import plot_depth_slice as pds
-            cmap = pds._cmap('RdBu', 16)
+            cmap = pds._cmap(name, 16)
         except Exception:
-            pass
+            cmap = matplotlib.colormaps[name]
     import time
     for r, m in enumerate(models):
         t0 = time.time()

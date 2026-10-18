@@ -33,8 +33,9 @@ from domains import Domains, model_fields                     # noqa: E402
 DISPERSION_SET = ['wac', 'yilgarn', 'pilbara', 'capricorn', 'albany_fraser', 'perth',
                   'canning', 'officer', 'eucla']
 
-FIELD_ORDER = ('vsv', 'viso', 'xi', 'vpvs')
-FIELD_LABEL = {'vsv': 'Vsv (km/s)', 'viso': 'Viso (km/s)', 'xi': 'xi = Vsh/Vsv', 'vpvs': 'Vp/Vs'}
+FIELD_ORDER = ('vsv', 'viso', 'xi', 'xi2', 'vpvs')
+FIELD_LABEL = {'vsv': 'Vsv (km/s)', 'viso': 'Viso (km/s)', 'xi': 'Xi = Vsh/Vsv', 'xi2': 'xi = (Vsh/Vsv)$^2$',
+               'vpvs': 'Vp/Vs'}
 STYLES = ['-', '--', ':', '-.']
 
 
@@ -203,7 +204,7 @@ def main():
             if mh is not None and m.sum():
                 mohos[(label, k)] = (np.nanmean(mh[m]), np.nanstd(mh[m]))
 
-    fields = [f for f in (a.fields or FIELD_ORDER) if any(f in mod[4] for mod in models)]
+    fields = [f for f in (a.fields or ('vsv', 'viso', 'xi2', 'vpvs')) if any(f in mod[4] for mod in models)]
     if not fields:
         sys.exit('no fields to plot')
 
@@ -263,7 +264,7 @@ def main():
         ax.set_xlabel(FIELD_LABEL[f], fontsize=10)
         ax.grid(alpha=0.25, lw=0.5)
         ax.tick_params(labelsize=8)
-        if f == 'xi':
+        if f in ('xi', 'xi2'):
             ax.axvline(1.0, color='0.4', lw=0.8, ls='--')
         if j == 0:
             ax.set_ylabel('Depth (km)', fontsize=10)

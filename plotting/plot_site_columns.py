@@ -33,6 +33,7 @@ import tomo2d as t2                                           # noqa: E402
 from plot_site_profiles import sample, model_label, LABEL, gc_km   # noqa: E402
 
 DEFAULT_BINS = {'vsv': (3.0, 4.5, 0.25), 'viso': (3.0, 4.5, 0.25), 'xi': (0.9, 1.1, 0.025),
+                'xi2': (0.88, 1.12, 0.02),
                 'vpvs': (1.65, 1.90, 0.025)}
 
 
@@ -144,7 +145,7 @@ def main():
         lo, hi, st = DEFAULT_BINS[a.field]
     bounds = np.round(np.arange(lo, hi + st / 2, st), 6)
     nb = len(bounds) - 1
-    base = a.cmap or {'xi': 'RdBu', 'vpvs': 'viridis'}.get(a.field if not shallow else 'vs', 'turbo_r')
+    base = a.cmap or {'xi': 'RdBu_r', 'xi2': 'RdBu_r', 'vpvs': 'viridis'}.get(a.field if not shallow else 'vs', 'turbo_r')
     cmap = make_cmap(base, nb)
     norm = BoundaryNorm(bounds, cmap.N)
     print(f"colour bins {lo:g}-{hi:g} every {st:g} ({nb} colours, {base})")

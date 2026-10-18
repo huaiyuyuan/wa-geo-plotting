@@ -124,15 +124,17 @@ class Domains:
 
 
 def model_fields(d):
-    """The physical fields a model carries: {'vsv': true Vsv, 'viso', 'xi', 'vpvs'} as
+    """The physical fields a model carries: {'vsv': true Vsv, 'viso', 'xi', 'xi2', 'vpvs'} as
     [nodes, depth] arrays - xi models give Viso in 'Vsv' and true Vsv from xi; Vp/Vs and
-    xi only when they vary."""
+    xi only when they vary. 'xi' = the stored Xi = Vsh/Vsv (linear); 'xi2' = Xi^2 = the
+    conventional radial anisotropy (Vsh/Vsv)^2."""
     varies = lambda k: k in d and np.nanstd(d[k]) > 1e-4
     F = {}
     if varies('Xi'):
         F['vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
         F['viso'] = d['Vsv']
         F['xi'] = d['Xi']
+        F['xi2'] = d['Xi'] ** 2
     else:
         F['vsv'] = d['Vsv']
     if varies('Vpvs'):
