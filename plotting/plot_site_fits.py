@@ -20,6 +20,8 @@ File formats (RJ_MCMC_2D):
                 to change: e.g. 'p cR uR cL uL' if your synthetic file has period first)
 Style: model 1 data blue, synthetics red; model 2 data green, synthetics magenta; data thick
 with dots, synthetics thin; phase solid, group dashed; Love curves when present (lighter).
+An observed curve identical in both models (e.g. the Rayleigh data of a Z and a ZT run) is
+drawn once in dark grey.
 Each panel lists the RMS (synthetic - data) per model. Writes <out> (+ .pdf) and
 <stem>.rms.txt.
 """
@@ -40,6 +42,20 @@ COLS = ('cR', 'uR', 'cL', 'uL')
 NAME = {'cR': 'R phase', 'uR': 'R group', 'cL': 'L phase', 'uL': 'L group'}
 STYLE = [dict(data='#1f4fd1', syn='#d62728'), dict(data='#1a9641', syn='#c51b7d')]
 LS = {'cR': '-', 'uR': '--', 'cL': '-', 'uL': '--'}
+SHARED = '0.15'                                  # observed curve common to both models
+
+
+def shared(models, k, c):
+    """True when both models have the same observed curve c at site k (e.g. the Z and ZT runs
+    fit the same Rayleigh data): it is then drawn once, in dark grey."""
+    if len(models) < 2:
+        return False
+    a, b = models[0]['per'][k]['data'], models[1]['per'][k]['data']
+    if a is None or b is None or len(a['p']) != len(b['p']) or not np.allclose(a['p'], b['p']):
+        return False
+    x, y = a[c], b[c]
+    return bool(np.isfinite(x).any()) and np.array_equal(np.isfinite(x), np.isfinite(y)) \
+        and np.allclose(x[np.isfinite(x)], y[np.isfinite(y)], atol=1e-4)
 
 
 def gc_km(lon1, lat1, lon2, lat2):
@@ -134,6 +150,7 @@ def main():
     ns = len(sites); nc = a.ncol; nr = int(np.ceil(ns / nc))
     fig, axs = plt.subplots(nr, nc, figsize=(2.15 * nc + 0.4, a.panel_h * nr + 0.5), squeeze=False)
     rms_rows = []
+    any_shared = [False]
     for k, s in enumerate(sites):
         ax = axs.flat[k]
         col = t2.terrane_colour(s['terrane'], k)
@@ -152,9 +169,14 @@ def main():
                 if not np.isfinite(dd[c]).any():
                     continue
                 al = 1.0 if c in ('cR', 'uR') else 0.5
-                ax.plot(dd['p'], dd[c], LS[c], color=st['data'], lw=2.2, alpha=al, marker='o', ms=2.2)
+                if shared(models, k, c):
+                    if mi == 0:                         # same observed curve for both models: draw once
+                        ax.plot(dd['p'], dd[c], LS[c], color=SHARED, lw=2.4, alpha=al, marker='o', ms=2.4, zorder=2)
+                        any_shared[0] = True
+                else:
+                    ax.plot(dd['p'], dd[c], LS[c], color=st['data'], lw=2.2, alpha=al, marker='o', ms=2.2)
                 if sy is not None and np.isfinite(sy[c]).any():
-                    ax.plot(sy['p'], sy[c], LS[c], color=st['syn'], lw=1.0, alpha=al)
+                    ax.plot(sy['p'], sy[c], LS[c], color=st['syn'], lw=1.0, alpha=al, zorder=3)
                     sv = np.interp(dd['p'], sy['p'], sy[c], left=np.nan, right=np.nan)
                     ok = np.isfinite(sv) & np.isfinite(dd[c])
                     res.append(sv[ok] - dd[c][ok])
@@ -183,6 +205,8 @@ def main():
             st = STYLE[mi % 2]
             h += [Line2D([], [], color=st['data'], lw=2.2, marker='o', ms=3, label=f"{m['label']} data"),
                   Line2D([], [], color=st['syn'], lw=1.0, label=f"{m['label']} synthetic")]
+        if any_shared[0]:
+            h.append(Line2D([], [], color=SHARED, lw=2.4, marker='o', ms=3, label='data common to both'))
         h += [Line2D([], [], color='0.3', ls='-', lw=1.2, label='phase'),
               Line2D([], [], color='0.3', ls='--', lw=1.2, label='group')]
         lax.legend(handles=h, loc='upper left', fontsize=7.2, frameon=False)
