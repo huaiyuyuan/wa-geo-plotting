@@ -287,24 +287,27 @@ def _section_scale(maxd, zbot, ve=DEFAULT_VE, page_w_in=PAGE_W_IN):
 # neutral (white) centre and a gentle gap; ABSOLUTE values (Vsv, Viso) -> plain,
 # continuous Spectral. Gap/neutral settings below apply to the centred maps only; DIV_GAP = half-width of the skipped band
 # (0 = classic RdBu through white). Set from --div-gap.
-DIV_GAP = 0.07
+DIV_GAP = 0.20
 DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) stays continuous
 
 
-DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white
+DIV_WHITE = 0.5     # neutral (white) band width in colour steps (0.5 = half a step); --div-white
 
 
 def _cmap(name, n=32):
+    """Diverging maps: n colour levels split evenly either side of a neutral (white) band of
+    DIV_WHITE levels - fractional allowed (0.5 = one white step half as wide as a colour step;
+    1 = exactly one white step); DIV_GAP skips the palest +-gap of the base map."""
     if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
-        k = max(0, min(DIV_WHITE, n - 2))
-        if (n - k) % 2:                      # keep the neutral band centred
-            k += 1
-        side = (n - k) // 2
-        lo = base(np.linspace(0.0, 0.5 - DIV_GAP, side))
-        hi = base(np.linspace(0.5 + DIV_GAP, 1.0, side))
-        mid = np.repeat(np.asarray(base(0.5))[None, :], k, axis=0)
+        w = max(0.0, min(float(DIV_WHITE), n - 2.0))
+        side = max(1, int((n - np.floor(w)) // 2))
+        f = 1 if abs(w - round(w)) < 1e-6 else 2            # sub-steps per colour level
+        kw = int(round(w * f))
+        lo = np.repeat(base(np.linspace(0.0, 0.5 - DIV_GAP, side)), f, axis=0)
+        hi = np.repeat(base(np.linspace(0.5 + DIV_GAP, 1.0, side)), f, axis=0)
+        mid = np.repeat(np.asarray(base(0.5))[None, :], kw, axis=0)
         return ListedColormap(np.vstack([lo, mid, hi]), name=f'{name}_gap')
     try:
         return matplotlib.colormaps[name].resampled(n)
@@ -1226,11 +1229,11 @@ def main():
                          'per-section figure (use the same values for models you compare)')
     ap.add_argument('--clim-xi', type=float, default=5.0,
                     help='dlnXi colour limit, +/- %% (default 5)')
-    ap.add_argument('--div-gap', type=float, default=0.07,
+    ap.add_argument('--div-gap', type=float, default=0.20,
                     help='diverging colour maps skip +/- this band around white '
-                         '(0 = classic RdBu through white; default 0.07)')
-    ap.add_argument('--div-white', type=int, default=2,
-                    help='neutral colour levels at the centre of diverging maps (0 = none)')
+                         '(0 = classic RdBu through white; default 0.20)')
+    ap.add_argument('--div-white', type=float, default=0.5,
+                    help='white band at the centre of diverging maps, in colour steps (default 0.5; 0 = none)')
     ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
                     help='grey veil below the Moho to the bottom of the section (0-1, default 0.5)')
     ap.add_argument('--no-moho-mask', action='store_true', help='Moho line only, no grey veil')

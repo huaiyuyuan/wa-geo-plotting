@@ -41,10 +41,10 @@ def main():
     ap.add_argument('--no-footprint', action='store_true', help='full WA view, no focus')
     ap.add_argument('--overlay', default='boundaries',
                     choices=['boundaries', 'outlines', 'both', 'filled', 'none'])
-    ap.add_argument('--div-gap', type=float, default=0.07,
+    ap.add_argument('--div-gap', type=float, default=0.20,
                     help='diverging maps skip +/- this band around white (0 = classic)')
-    ap.add_argument('--div-white', type=int, default=2,
-                    help='neutral colour levels at the centre of diverging maps (0 = none)')
+    ap.add_argument('--div-white', type=float, default=0.5,
+                    help='white band at the centre of diverging maps, in colour steps (default 0.5; 0 = none)')
     ap.add_argument('extra', nargs=argparse.REMAINDER,
                     help='after "--": further options for plot_vsv_tectonic.py')
     a = ap.parse_args()

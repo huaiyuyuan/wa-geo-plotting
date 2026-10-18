@@ -109,8 +109,8 @@ def main():
     ap.add_argument('--footprint-npz', default=None)
     ap.add_argument('--footprint-outline', default=None)
     ap.add_argument('--footprint-veil', type=float, default=0.75)
-    ap.add_argument('--div-gap', type=float, default=0.07)
-    ap.add_argument('--div-white', type=int, default=2)
+    ap.add_argument('--div-gap', type=float, default=0.20)
+    ap.add_argument('--div-white', type=float, default=0.5)
     ap.add_argument('--out-dir', default='figures/compare')
     a = ap.parse_args()
     pds.DIV_GAP, pds.DIV_WHITE = a.div_gap, a.div_white

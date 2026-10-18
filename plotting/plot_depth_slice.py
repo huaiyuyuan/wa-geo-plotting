@@ -203,24 +203,27 @@ def _plot_scatter(ax, lon, lat, val, cmap, vmin, vmax, s=120):
 # neutral (white) centre and a gentle gap; ABSOLUTE values (Vsv, Viso) -> plain,
 # continuous Spectral. Gap/neutral settings below apply to the centred maps only; DIV_GAP = half-width of the skipped band
 # (0 = classic RdBu through white). Set from --div-gap.
-DIV_GAP = 0.07
+DIV_GAP = 0.20
 DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) stays continuous
 
 
-DIV_WHITE = 2       # neutral (centre-colour) levels kept in the middle; --div-white
+DIV_WHITE = 0.5     # neutral (white) band width in colour steps (0.5 = half a step); --div-white
 
 
 def _cmap(name, n=32):
+    """Diverging maps: n colour levels split evenly either side of a neutral (white) band of
+    DIV_WHITE levels - fractional allowed (0.5 = one white step half as wide as a colour step;
+    1 = exactly one white step); DIV_GAP skips the palest +-gap of the base map."""
     if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
-        k = max(0, min(DIV_WHITE, n - 2))
-        if (n - k) % 2:                      # keep the neutral band centred
-            k += 1
-        side = (n - k) // 2
-        lo = base(np.linspace(0.0, 0.5 - DIV_GAP, side))
-        hi = base(np.linspace(0.5 + DIV_GAP, 1.0, side))
-        mid = np.repeat(np.asarray(base(0.5))[None, :], k, axis=0)
+        w = max(0.0, min(float(DIV_WHITE), n - 2.0))
+        side = max(1, int((n - np.floor(w)) // 2))
+        f = 1 if abs(w - round(w)) < 1e-6 else 2            # sub-steps per colour level
+        kw = int(round(w * f))
+        lo = np.repeat(base(np.linspace(0.0, 0.5 - DIV_GAP, side)), f, axis=0)
+        hi = np.repeat(base(np.linspace(0.5 + DIV_GAP, 1.0, side)), f, axis=0)
+        mid = np.repeat(np.asarray(base(0.5))[None, :], kw, axis=0)
         return ListedColormap(np.vstack([lo, mid, hi]), name=f'{name}_gap')
     try:
         return matplotlib.colormaps[name].resampled(n)

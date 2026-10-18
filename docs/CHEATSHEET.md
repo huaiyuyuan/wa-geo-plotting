@@ -72,7 +72,7 @@ Every PNG has a `.pdf` beside it. `fp` = array-footprint view, `wa` = whole WA.
 ---------------------------------------------------------------------------------------
 ## 2. Conventions (defaults)
 - Absolute values: continuous **Spectral** (warm = slow). Relative values and xi: **RdBu** with a
-  small white centre and gentle transition (`--div-gap 0.07 --div-white 2`). Vp/Vs: **viridis**.
+  thin white centre, half a colour step wide, palest tints skipped (`--div-gap 0.20 --div-white 0.5`; 18 Oct 2026, was 0.07 / 2). Vp/Vs: **viridis**.
 - 16 colour levels; cross-sections VE 3, depth 0–60 km.
 - Depth slices at **5 / 15 / 30 / 45 km** (not 40: Moho artefact; now the make_depth_maps default).
 - dln reference: whole-model mean at each depth by default; `--ref-domain yilgarn` = Yilgarn mean.
