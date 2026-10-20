@@ -316,14 +316,18 @@ def main():
                                      np.asarray(p['lat'][i], float))
                 for i in range(len(p['short']))}
     sta = None
-    if not args.no_stations and args.stations and os.path.isfile(args.stations):
+    if not args.no_stations:                 # default to config.STATIONS, as --index-map does
         try:
             import config
-            cols = config.STATION_COLS
+            sta_path, cols = args.stations or config.STATIONS, config.STATION_COLS
         except Exception:
-            cols = (2, 1)
-        sta = px._load_stations(args.stations, cols)
-        print(f"  stations: {len(sta[0])} <- {args.stations}")
+            sta_path, cols = args.stations, (2, 1)
+        if sta_path and os.path.isfile(sta_path):
+            sta = px._load_stations(sta_path, cols)
+            print(f"  stations: {len(sta[0])} <- {sta_path}")
+        else:
+            print(f"  stations: file not found ({sta_path}) - none drawn "
+                  f"(pass --stations, or --no-stations to silence)")
     overlays = []
     for csv_path, col, mark, lab in args.map_stations:
         if not os.path.isfile(csv_path):
