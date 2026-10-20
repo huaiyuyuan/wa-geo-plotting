@@ -35,6 +35,11 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plot_xsection as px
 
+def _slug(s):
+    import re
+    return re.sub(r'[^a-z0-9]+', '-', str(s).strip().lower()).strip('-') or 'model'
+
+
 GROUP_TITLE = {'we': 'West-East', 'ns': 'North-South', 'senw': 'SE-NW'}
 GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('N', 'S'), 'senw': ('NW', 'SE')}
 FIELD_ARR   = {'vsv': 'Vsv', 'dvsv': 'Vsv', 'viso': 'Vsv', 'xi': 'Xi', 'vpvs': 'Vpvs'}
@@ -244,7 +249,8 @@ def plot_group(group, profs, models, field, z_by_model, out_dir, args):
         except Exception:
             pass
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f'profiles.{field}.{group}.png')
+    mtag = args.tag or '_'.join(_slug(m['label']) for m in models)
+    out = os.path.join(out_dir, f'profiles.{field}.{mtag}.{group}.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     fig.savefig(out.replace('.png', '.pdf'), bbox_inches='tight')
     plt.close(fig)
@@ -294,6 +300,9 @@ def main():
     ap.add_argument('--bnd-lines', action='store_true')
     ap.add_argument('--domain-colours', default='map2022')
     ap.add_argument('--out-dir', default='.', dest='out_dir')
+    ap.add_argument('--tag', default=None,
+                    help='model tag in the file name (default: the model labels slugged '
+                         'and joined, e.g. v2-iter10_v3c-iter3)')
     args = ap.parse_args()
 
     px.MAX_NODE_DIST = args.max_node_dist
