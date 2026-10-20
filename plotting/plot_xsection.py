@@ -1327,7 +1327,7 @@ def main():
             _edge = _spec[4] if len(_spec) > 4 else 'w'
             if not os.path.isfile(csv_path):
                 print(f"  map-stations: file not found ({csv_path}) - skipped"); continue
-            olon, olat = _load_station_csv(csv_path)
+            olon, olat, _ = _load_station_csv(csv_path)   # _load_station_csv returns codes too
             _overlays.append((olon, olat, col, mark, 22, lab, _edge))
             print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark}, edge {_edge})")
         plot_map(sections, args.out_dir, d=d, tick_km=args.index_tick, stations=sta,

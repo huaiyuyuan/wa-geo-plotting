@@ -23,10 +23,12 @@ import matplotlib
 
 
 def _load_station_csv(path):
-    """Station lon/lat from a CSV with named Latitude/Longitude columns (any order;
-    e.g. the GSWA 'New.WA.Seismic' exports). Returns (lon, lat)."""
+    """Station lon/lat (and code, if present) from a CSV with named Latitude/Longitude
+    columns (any order; e.g. the GSWA 'New.WA.Seismic' exports). Returns (lon, lat, codes):
+    codes is a list of per-station code strings from the first of
+    Code/Station Code/Station/Sta/Site_ID/Site/Name found, or None if no such column."""
     import csv
-    lon, lat = [], []
+    lon, lat, codes = [], [], []
     with open(path, newline='') as f:
         r = csv.reader(f)
         header = next(r, [])
@@ -40,6 +42,7 @@ def _load_station_csv(path):
         ilo = find('longitude', 'lon', 'long')
         if ila is None or ilo is None:
             raise SystemExit(f"{path}: need Latitude/Longitude columns; header was {header}")
+        icode = find('code', 'station code', 'station', 'sta', 'site_id', 'site', 'name')
         for row in r:
             if len(row) <= max(ila, ilo):
                 continue
@@ -47,7 +50,8 @@ def _load_station_csv(path):
                 lat.append(float(row[ila])); lon.append(float(row[ilo]))
             except ValueError:
                 continue
-    return np.array(lon), np.array(lat)
+            codes.append(row[icode].strip() if icode is not None and len(row) > icode else '')
+    return np.array(lon), np.array(lat), (codes if icode is not None else None)
 
 
 
@@ -173,6 +177,16 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
         oedge = ov[6] if len(ov) > 6 else 'w'
         ax.scatter(olon, olat, marker=omark, s=osize, c=ocol, edgecolors=oedge,
                    linewidths=0.4, zorder=5.6, **lkw)
+        ocodes = ov[7] if len(ov) > 7 else None     # per-station code labels for this layer
+        if ocodes is not None:
+            import matplotlib.patheffects as _pe
+            for _x, _y, _c in zip(olon, olat, ocodes):
+                if not _c:
+                    continue
+                ax.annotate(str(_c), (_x, _y), fontsize=5.5, xycoords=xyc,
+                            ha='left', va='center', zorder=8, xytext=(4, 0),
+                            textcoords='offset points',
+                            path_effects=[_pe.withStroke(linewidth=1.2, foreground='white')])
     if style != 'map2022' and geo is not None and geo['bnd'] is not None:
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(geo['bnd'].lines, colors='firebrick',
@@ -262,7 +276,7 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
                              markeredgecolor=(ov[6] if len(ov) > 6 else 'w'),
                              markersize=8, label=ov[5]))
         if sh:
-            leg_s = Legend(ax, sh, [h.get_label() for h in sh], loc='upper right',
+            leg_s = Legend(ax, sh, [h.get_label() for h in sh], loc='lower right',
                            fontsize=7, framealpha=0.9, title='Stations', title_fontsize=7)
             ax.add_artist(leg_s)
     import os
@@ -299,6 +313,11 @@ def main():
                          '--map-stations perm.csv red ^ Permanent black')
     ap.add_argument('--stations-label', default='Available',
                     help='legend label for the --stations layer (red squares)')
+    ap.add_argument('--label-stations', nargs='+', default=None, metavar='LABEL',
+                    help='annotate stations with their station code, for the named '
+                         '--map-stations layer(s) only (matched by their LABEL; quote labels '
+                         'with spaces). The CSV must have a code column '
+                         '(Code/Station/Sta/Site_ID/Site/Name). e.g. --label-stations Permanent')
     ap.add_argument('--footprint', action='store_true')
     ap.add_argument('--footprint-npz', default=None)
     ap.add_argument('--footprint-outline', default=None)
@@ -338,6 +357,7 @@ def main():
         else:
             print(f"  stations: file not found ({sta_path}) - none drawn "
                   f"(pass --stations, or --no-stations to silence)")
+    label_set = set(args.label_stations or [])
     overlays = []
     for spec in args.map_stations:
         if len(spec) < 4:
@@ -346,9 +366,18 @@ def main():
         edge = spec[4] if len(spec) > 4 else 'w'
         if not os.path.isfile(csv_path):
             print(f"  map-stations: file not found ({csv_path}) - skipped"); continue
-        olon, olat = _load_station_csv(csv_path)
-        overlays.append((olon, olat, col, mark, 22, lab, edge))
-        print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark}, edge {edge})")
+        olon, olat, ocodes = _load_station_csv(csv_path)
+        want_codes = lab in label_set
+        if want_codes and ocodes is None:
+            print(f"  map-stations: '{lab}' has no code column (Code/Station/Sta/Site_ID/"
+                  f"Site/Name) in {csv_path} - labels skipped")
+        codes = ocodes if want_codes else None
+        overlays.append((olon, olat, col, mark, 22, lab, edge, codes))
+        print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark}, edge {edge}"
+              + (", + codes" if codes is not None else "") + ")")
+    for want in label_set:
+        if want not in [spec[3] for spec in args.map_stations]:
+            print(f"  --label-stations: no --map-stations layer labelled '{want}'")
     geo = None
     if args.index_style != 'map2022':
         try:
