@@ -169,6 +169,22 @@ def _great_circle_path(lat1, lon1, lat2, lon2, ds_deg=0.08):
     return lats, lons, dists
 
 
+def _polyline_path(lons, lats, ds_deg=0.08):
+    """(lat, lon, dist_km) along a multi-vertex polyline: great-circle segments between
+    consecutive vertices, joined. Falls back to a straight line for 2 vertices."""
+    lons = np.asarray(lons, float); lats = np.asarray(lats, float)
+    if len(lons) < 2:
+        return lats, lons, np.zeros(len(lons))
+    PL, PO, DS, base = [], [], [], 0.0
+    for i in range(len(lons) - 1):
+        la, lo, ds = _great_circle_path(lats[i], lons[i], lats[i + 1], lons[i + 1], ds_deg)
+        if i > 0:
+            la, lo, ds = la[1:], lo[1:], ds[1:]
+        PL.append(la); PO.append(lo); DS.append(ds + base)
+        base = DS[-1][-1] if len(DS[-1]) else base
+    return np.concatenate(PL), np.concatenate(PO), np.concatenate(DS)
+
+
 # ── Profile interpolation ─────────────────────────────────────────────────────
 _RBF_CACHE = []        # [(data3d, Lon, Lat, RBFInterpolator)] - same arrays, same fit
 MAX_NODE_DIST = 0.5   # deg: profile points further from any model node are left blank
@@ -790,7 +806,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                     litho_npz=None, tick_km=100, stations=None, style='map2022',
                     footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
                     projection='albers', legend='upper left', labels='major',
-                    label_scale=1.4):
+                    label_scale=1.4, polylines=None):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -867,18 +883,22 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
     if stations is not None:            # above the ocean mask (5), below section lines
         slon, slat = stations
         n_sta = len(slon)
-        ax.scatter(slon, slat, marker='^', s=16, c='k', edgecolors='w',
+        ax.scatter(slon, slat, marker='^', s=16, c='red', edgecolors='w',
                    linewidths=0.35, zorder=5.5, **lkw)
     if style != 'map2022' and _GEO is not None and _GEO['bnd'] is not None:
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(_GEO['bnd'].lines, colors='firebrick',
                                          linewidths=0.9, alpha=0.8, zorder=4, **lkw))
     for i, (lat1, lon1, lat2, lon2, lab) in enumerate(sections):
-        plat, plon, dist = _great_circle_path(lat1, lon1, lat2, lon2)
+        if polylines and lab in polylines:        # draw the true picked path, not a chord
+            plo, pla = polylines[lab]
+            plat, plon, dist = _polyline_path(plo, pla)
+        else:
+            plat, plon, dist = _great_circle_path(lat1, lon1, lat2, lon2)
         ax.plot(plon, plat, 'w-', lw=3.4, zorder=5, **lkw)   # white halo
         ax.plot(plon, plat, 'k-', lw=2.0, zorder=6, **lkw)
-        ax.plot(lon1, lat1, 'ko', ms=6, zorder=7, **lkw)
-        ax.plot(lon2, lat2, 'ks', ms=6, zorder=7, **lkw)
+        ax.plot(plon[0], plat[0], 'ko', ms=6, zorder=7, **lkw)
+        ax.plot(plon[-1], plat[-1], 'ks', ms=6, zorder=7, **lkw)
         for dkm in np.arange(0, dist[-1], tick_km):
             j = np.argmin(np.abs(dist - dkm))
             ax.plot(plon[j], plat[j], '|', color='k', ms=7, mew=1.2, zorder=7, **lkw)
@@ -886,9 +906,11 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                         ha='center', va='bottom', zorder=8,
                         xytext=(0, 3), textcoords='offset points',
                         bbox=dict(fc='w', ec='none', alpha=0.6, pad=0.3))
-        ax.annotate(lab, (lon1, lat1), fontsize=9, fontweight='bold', xycoords=xyc,
-                    color='darkred', zorder=8, xytext=(5,5),
-                    textcoords='offset points')
+        import matplotlib.patheffects as _pe
+        ax.annotate(lab, (plon[0], plat[0]), fontsize=9, fontweight='bold', xycoords=xyc,
+                    color='red', zorder=8, xytext=(5,5),
+                    textcoords='offset points',
+                    path_effects=[_pe.withStroke(linewidth=1.6, foreground='white')])
 
     # Grey ocean mask + coastline on top (like the depth-slice panels)
     if _geo:
@@ -1268,6 +1290,10 @@ def main():
                     help='Vertical exaggeration for stacked sections (1=true scale/flat, higher=taller; default 3).')
     ap.add_argument('--index-map', action='store_true',
                     help='Also draw an index map of all sections on the tectonic geology')
+    ap.add_argument('--load-polylines', default=None,
+                    help='profiles polylines npz (from mat_to_profiles.py): draw each line on '
+                         'the index map along its TRUE picked path (curves kept) instead of a '
+                         'straight chord. Lines are matched to the sections by label.')
     ap.add_argument('--long-ratio', type=float, default=None,
                     help='LEGACY: width:height of the longest panel (overrides --ve). '
                          'Default: size by VE like --stack.')
@@ -1446,7 +1472,15 @@ def main():
                 print(f"  stations: {len(sta[0])} <- {sta_path}")
             else:
                 print(f"  stations: file not found ({sta_path}) - none drawn")
+        _poly = None
+        if args.load_polylines:
+            _p = np.load(args.load_polylines, allow_pickle=True)
+            _poly = {str(_p['short'][i]): (np.asarray(_p['lon'][i], float),
+                                           np.asarray(_p['lat'][i], float))
+                     for i in range(len(_p['short']))}
+            print(f"  index map: drawing {len(_poly)} lines along their picked polylines")
         _plot_index_map(d, sections, args.out_dir, tick_km=args.index_tick, stations=sta,
+                        polylines=_poly,
                         style='plain' if args.index_plain else args.index_style,
                         footprint=_index_footprint(args), footprint_veil=args.footprint_veil,
                         tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
