@@ -911,7 +911,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
     if stations is not None:            # above the ocean mask (5), below section lines
         slon, slat = stations
         n_sta = len(slon)
-        ax.scatter(slon, slat, marker='^', s=16, c='red', edgecolors='w',
+        ax.scatter(slon, slat, marker='s', s=16, c='red', edgecolors='w',
                    linewidths=0.35, zorder=5.5, **lkw)
     for ov in (overlays or []):         # extra station layers (e.g. phase 4, permanent)
         olon, olat, ocol, omark, osize, _olabel = ov
@@ -1000,7 +1000,7 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         from matplotlib.legend import Legend
         sh = []
         if stations is not None:
-            sh.append(Line2D([], [], marker='^', color='none', markerfacecolor='red',
+            sh.append(Line2D([], [], marker='s', color='none', markerfacecolor='red',
                              markeredgecolor='w', markersize=7, label='WA Array'))
         for ov in (overlays or []):
             sh.append(Line2D([], [], marker=ov[3], color='none', markerfacecolor=ov[2],
