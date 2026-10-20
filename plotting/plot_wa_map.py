@@ -69,6 +69,9 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
     plot_xsection._load_geology) for the non-map2022 boundary overlay; default None."""
     import matplotlib.pyplot as plt
     import plot_xsection as px            # lazy: reuse shared geometry/geology helpers
+    # keep text editable in the .pdf (Type-42 fonts, not outlines) for Illustrator/Inkscape
+    matplotlib.rcParams['pdf.fonttype'] = 42
+    matplotlib.rcParams['ps.fonttype'] = 42
     if geo is None:
         geo = getattr(px, '_GEO', None)
     # points used for the extent (and the fallback node scatter when d is given)
