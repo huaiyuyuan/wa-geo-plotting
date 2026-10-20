@@ -1126,12 +1126,13 @@ def main():
                     help='profiles polylines npz (from mat_to_profiles.py): draw each line on '
                          'the index map along its TRUE picked path (curves kept) instead of a '
                          'straight chord. Lines are matched to the sections by label.')
-    ap.add_argument('--map-stations', nargs=4, action='append', default=[],
-                    metavar=('CSV', 'COLOUR', 'MARKER', 'LABEL'),
+    ap.add_argument('--map-stations', nargs='+', action='append', default=[],
+                    metavar='CSV COLOUR MARKER LABEL [EDGE]',
                     help='extra station layer on the index map from a CSV with Latitude/Longitude '
-                         'columns, drawn as MARKER (e.g. s=square) in COLOUR with the legend LABEL. '
-                         'Repeatable, e.g. --map-stations phase4.csv green s "Phase 4" '
-                         '--map-stations perm.csv black s Permanent')
+                         'columns, drawn as MARKER (e.g. s=square, ^=triangle) in COLOUR with the '
+                         'legend LABEL and optional marker EDGE colour (default white). Repeatable, '
+                         'e.g. --map-stations phase4.csv lime s "Phase 4" '
+                         '--map-stations perm.csv red ^ Permanent black')
     ap.add_argument('--long-ratio', type=float, default=None,
                     help='LEGACY: width:height of the longest panel (overrides --ve). '
                          'Default: size by VE like --stack.')
@@ -1319,12 +1320,16 @@ def main():
             print(f"  index map: drawing {len(_poly)} lines along their picked polylines")
         from plot_wa_map import plot_map, _load_station_csv   # map plotter lives here now
         _overlays = []
-        for csv_path, col, mark, lab in args.map_stations:
+        for _spec in args.map_stations:
+            if len(_spec) < 4:
+                ap.error(f"--map-stations needs CSV COLOUR MARKER LABEL [EDGE]; got {_spec}")
+            csv_path, col, mark, lab = _spec[0], _spec[1], _spec[2], _spec[3]
+            _edge = _spec[4] if len(_spec) > 4 else 'w'
             if not os.path.isfile(csv_path):
                 print(f"  map-stations: file not found ({csv_path}) - skipped"); continue
             olon, olat = _load_station_csv(csv_path)
-            _overlays.append((olon, olat, col, mark, 22, lab))
-            print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark})")
+            _overlays.append((olon, olat, col, mark, 22, lab, _edge))
+            print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark}, edge {_edge})")
         plot_map(sections, args.out_dir, d=d, tick_km=args.index_tick, stations=sta,
                  polylines=_poly, overlays=_overlays, geo=_GEO,
                  style='plain' if args.index_plain else args.index_style,

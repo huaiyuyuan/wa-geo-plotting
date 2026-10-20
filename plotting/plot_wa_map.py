@@ -55,7 +55,8 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
              litho_npz=None, tick_km=100, stations=None, style='map2022',
              footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
              projection='albers', legend='upper left', labels='major',
-             label_scale=1.4, polylines=None, overlays=None, geo=None):
+             label_scale=1.4, polylines=None, overlays=None, geo=None,
+             stations_label='Available', stations_size=22):
     """Profile lines / station map on the WA tectonic basemap, distance ticks + labels
     every tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -162,11 +163,12 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
     if stations is not None:            # above the ocean mask (5), below section lines
         slon, slat = stations
         n_sta = len(slon)
-        ax.scatter(slon, slat, marker='s', s=16, c='red', edgecolors='w',
-                   linewidths=0.35, zorder=5.5, **lkw)
+        ax.scatter(slon, slat, marker='s', s=stations_size, c='red', edgecolors='w',
+                   linewidths=0.4, zorder=5.5, **lkw)
     for ov in (overlays or []):         # extra station layers (e.g. phase 4, permanent)
-        olon, olat, ocol, omark, osize, _olabel = ov
-        ax.scatter(olon, olat, marker=omark, s=osize, c=ocol, edgecolors='w',
+        olon, olat, ocol, omark, osize = ov[0], ov[1], ov[2], ov[3], ov[4]
+        oedge = ov[6] if len(ov) > 6 else 'w'
+        ax.scatter(olon, olat, marker=omark, s=osize, c=ocol, edgecolors=oedge,
                    linewidths=0.4, zorder=5.6, **lkw)
     if style != 'map2022' and geo is not None and geo['bnd'] is not None:
         from matplotlib.collections import LineCollection
@@ -180,8 +182,8 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
             plat, plon, dist = px._great_circle_path(lat1, lon1, lat2, lon2)
         ax.plot(plon, plat, 'w-', lw=3.4, zorder=5, **lkw)   # white halo
         ax.plot(plon, plat, 'k-', lw=2.0, zorder=6, **lkw)
-        ax.plot(plon[0], plat[0], 'ko', ms=6, zorder=7, **lkw)
-        ax.plot(plon[-1], plat[-1], 'ks', ms=6, zorder=7, **lkw)
+        ax.plot(plon[0], plat[0], 'o', mfc='none', mec='k', mew=0.9, ms=4, zorder=7, **lkw)
+        ax.plot(plon[-1], plat[-1], 'o', mfc='none', mec='k', mew=0.9, ms=4, zorder=7, **lkw)
         for dkm in np.arange(0, dist[-1], tick_km):
             j = np.argmin(np.abs(dist - dkm))
             ax.plot(plon[j], plat[j], '|', color='k', ms=7, mew=1.2, zorder=7, **lkw)
@@ -251,10 +253,11 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
         sh = []
         if stations is not None:
             sh.append(Line2D([], [], marker='s', color='none', markerfacecolor='red',
-                             markeredgecolor='w', markersize=7, label='WA Array'))
+                             markeredgecolor='w', markersize=8, label=stations_label))
         for ov in (overlays or []):
             sh.append(Line2D([], [], marker=ov[3], color='none', markerfacecolor=ov[2],
-                             markeredgecolor='w', markersize=8, label=ov[5]))
+                             markeredgecolor=(ov[6] if len(ov) > 6 else 'w'),
+                             markersize=8, label=ov[5]))
         if sh:
             leg_s = Legend(ax, sh, [h.get_label() for h in sh], loc='upper right',
                            fontsize=7, framealpha=0.9, title='Stations', title_fontsize=7)
@@ -285,10 +288,14 @@ def main():
                     metavar=('LON0', 'LON1', 'LAT0', 'LAT1'), help='map frame')
     ap.add_argument('--stations', default=None, help='WA Array stations file (code lat lon)')
     ap.add_argument('--no-stations', action='store_true')
-    ap.add_argument('--map-stations', nargs=4, action='append', default=[],
-                    metavar=('CSV', 'COLOUR', 'MARKER', 'LABEL'),
+    ap.add_argument('--map-stations', nargs='+', action='append', default=[],
+                    metavar='CSV COLOUR MARKER LABEL [EDGE]',
                     help='extra station layer from a CSV with Latitude/Longitude columns '
-                         '(repeatable), e.g. --map-stations phase4.csv lime s "Phase 4"')
+                         '(repeatable). EDGE (marker edge colour) is optional, default white. '
+                         'e.g. --map-stations phase4.csv lime s "Phase 4"  or  '
+                         '--map-stations perm.csv red ^ Permanent black')
+    ap.add_argument('--stations-label', default='Available',
+                    help='legend label for the --stations layer (red squares)')
     ap.add_argument('--footprint', action='store_true')
     ap.add_argument('--footprint-npz', default=None)
     ap.add_argument('--footprint-outline', default=None)
@@ -329,12 +336,16 @@ def main():
             print(f"  stations: file not found ({sta_path}) - none drawn "
                   f"(pass --stations, or --no-stations to silence)")
     overlays = []
-    for csv_path, col, mark, lab in args.map_stations:
+    for spec in args.map_stations:
+        if len(spec) < 4:
+            ap.error(f"--map-stations needs CSV COLOUR MARKER LABEL [EDGE]; got {spec}")
+        csv_path, col, mark, lab = spec[0], spec[1], spec[2], spec[3]
+        edge = spec[4] if len(spec) > 4 else 'w'
         if not os.path.isfile(csv_path):
             print(f"  map-stations: file not found ({csv_path}) - skipped"); continue
         olon, olat = _load_station_csv(csv_path)
-        overlays.append((olon, olat, col, mark, 22, lab))
-        print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path}")
+        overlays.append((olon, olat, col, mark, 22, lab, edge))
+        print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark}, edge {edge})")
     geo = None
     if args.index_style != 'map2022':
         try:
@@ -362,7 +373,8 @@ def main():
              tect_npz=px._resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
              bnd_npz=px._resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', args.bnd_npz),
              projection=args.index_proj, legend=args.index_legend, labels=args.index_labels,
-             label_scale=args.label_scale, polylines=poly, overlays=overlays, geo=geo)
+             label_scale=args.label_scale, polylines=poly, overlays=overlays, geo=geo,
+             stations_label=args.stations_label)
 
 
 if __name__ == '__main__':
