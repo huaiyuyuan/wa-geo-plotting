@@ -802,11 +802,39 @@ def _load_stations(path, cols=(2, 1)):
     return np.array(lon), np.array(lat)
 
 
+def _load_station_csv(path):
+    """Station lon/lat from a CSV with named Latitude/Longitude columns (any order;
+    e.g. the GSWA 'New.WA.Seismic' exports). Returns (lon, lat)."""
+    import csv
+    lon, lat = [], []
+    with open(path, newline='') as f:
+        r = csv.reader(f)
+        header = next(r, [])
+        hl = [h.strip().lower() for h in header]
+        def find(*names):
+            for n in names:
+                if n in hl:
+                    return hl.index(n)
+            return None
+        ila = find('latitude', 'lat')
+        ilo = find('longitude', 'lon', 'long')
+        if ila is None or ilo is None:
+            raise SystemExit(f"{path}: need Latitude/Longitude columns; header was {header}")
+        for row in r:
+            if len(row) <= max(ila, ilo):
+                continue
+            try:
+                lat.append(float(row[ila])); lon.append(float(row[ilo]))
+            except ValueError:
+                continue
+    return np.array(lon), np.array(lat)
+
+
 def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                     litho_npz=None, tick_km=100, stations=None, style='map2022',
                     footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
                     projection='albers', legend='upper left', labels='major',
-                    label_scale=1.4, polylines=None):
+                    label_scale=1.4, polylines=None, overlays=None):
     """Section lines on the WA tectonic map, with distance ticks + labels every
     tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -885,6 +913,10 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
         n_sta = len(slon)
         ax.scatter(slon, slat, marker='^', s=16, c='red', edgecolors='w',
                    linewidths=0.35, zorder=5.5, **lkw)
+    for ov in (overlays or []):         # extra station layers (e.g. phase 4, permanent)
+        olon, olat, ocol, omark, osize, _olabel = ov
+        ax.scatter(olon, olat, marker=omark, s=osize, c=ocol, edgecolors='w',
+                   linewidths=0.4, zorder=5.6, **lkw)
     if style != 'map2022' and _GEO is not None and _GEO['bnd'] is not None:
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(_GEO['bnd'].lines, colors='firebrick',
@@ -962,6 +994,21 @@ def _plot_index_map(d, sections, out_dir, label='sections', moho=None,
                         clip_box=(Lon.min()-0.5, Lon.max()+0.5, Lat.min()-0.5, Lat.max()+0.5),
                         exclude=('STATE',),
                         litho=litho_drawn)
+    # station-type legend (WA Array + any overlay layers), as a separate legend
+    if stations is not None or overlays:
+        from matplotlib.lines import Line2D
+        from matplotlib.legend import Legend
+        sh = []
+        if stations is not None:
+            sh.append(Line2D([], [], marker='^', color='none', markerfacecolor='red',
+                             markeredgecolor='w', markersize=7, label='WA Array'))
+        for ov in (overlays or []):
+            sh.append(Line2D([], [], marker=ov[3], color='none', markerfacecolor=ov[2],
+                             markeredgecolor='w', markersize=8, label=ov[5]))
+        if sh:
+            leg_s = Legend(ax, sh, [h.get_label() for h in sh], loc='upper right',
+                           fontsize=7, framealpha=0.9, title='Stations', title_fontsize=7)
+            ax.add_artist(leg_s)
     import os
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, 'xsection_index_map' +
@@ -1294,6 +1341,12 @@ def main():
                     help='profiles polylines npz (from mat_to_profiles.py): draw each line on '
                          'the index map along its TRUE picked path (curves kept) instead of a '
                          'straight chord. Lines are matched to the sections by label.')
+    ap.add_argument('--map-stations', nargs=4, action='append', default=[],
+                    metavar=('CSV', 'COLOUR', 'MARKER', 'LABEL'),
+                    help='extra station layer on the index map from a CSV with Latitude/Longitude '
+                         'columns, drawn as MARKER (e.g. s=square) in COLOUR with the legend LABEL. '
+                         'Repeatable, e.g. --map-stations phase4.csv green s "Phase 4" '
+                         '--map-stations perm.csv black s Permanent')
     ap.add_argument('--long-ratio', type=float, default=None,
                     help='LEGACY: width:height of the longest panel (overrides --ve). '
                          'Default: size by VE like --stack.')
@@ -1479,8 +1532,15 @@ def main():
                                            np.asarray(_p['lat'][i], float))
                      for i in range(len(_p['short']))}
             print(f"  index map: drawing {len(_poly)} lines along their picked polylines")
+        _overlays = []
+        for csv_path, col, mark, lab in args.map_stations:
+            if not os.path.isfile(csv_path):
+                print(f"  map-stations: file not found ({csv_path}) - skipped"); continue
+            olon, olat = _load_station_csv(csv_path)
+            _overlays.append((olon, olat, col, mark, 22, lab))
+            print(f"  map-stations: {len(olon)} '{lab}' <- {csv_path} ({col} {mark})")
         _plot_index_map(d, sections, args.out_dir, tick_km=args.index_tick, stations=sta,
-                        polylines=_poly,
+                        polylines=_poly, overlays=_overlays,
                         style='plain' if args.index_plain else args.index_style,
                         footprint=_index_footprint(args), footprint_veil=args.footprint_veil,
                         tect_npz=_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
