@@ -94,13 +94,15 @@ def _group(short):
 
 
 def _orient(lat, lon, group):
-    """Flip the polyline so vertex 0 is the canonical start for its group."""
+    """Flip the polyline so vertex 0 is the canonical start for its group.
+    Convention (vertex 0 = the preferred start): W-E -> west, N-S -> south,
+    SE-NW -> south-east end. So distance increases W->E, S->N and SE->NW."""
     if group == 'we':
         start_is_first = lon[0] <= lon[-1]          # start at the west end
     elif group == 'ns':
-        start_is_first = lat[0] >= lat[-1]          # start at the north end
-    else:                                           # senw: start at the NW end
-        start_is_first = lon[0] <= lon[-1]
+        start_is_first = lat[0] <= lat[-1]          # start at the south end
+    else:                                           # senw: start at the SE (southern) end
+        start_is_first = lat[0] <= lat[-1]
     if not start_is_first:
         lat, lon = lat[::-1].copy(), lon[::-1].copy()
     return lat, lon

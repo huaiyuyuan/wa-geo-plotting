@@ -41,7 +41,7 @@ def _slug(s):
 
 
 GROUP_TITLE = {'we': 'West-East', 'ns': 'North-South', 'senw': 'SE-NW'}
-GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('N', 'S'), 'senw': ('NW', 'SE')}
+GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('S', 'N'), 'senw': ('SE', 'NW')}
 FIELD_ARR   = {'vsv': 'Vsv', 'dvsv': 'Vsv', 'viso': 'Vsv', 'xi': 'Xi', 'vpvs': 'Vpvs'}
 
 
@@ -142,9 +142,12 @@ def plot_group(group, profs, models, field, z_by_model, out_dir, args):
                 samp = (samp - ref[None, :]) / ref[None, :] * 100.0
             cell[(i, j)] = dict(dist=dist, z=z, data=samp)
 
+    # absolute-velocity colormap: cmapx (HY's red-green-blue) or Spectral
+    abs_cmap = px.cmapx(args.ncolors) if args.cmap == 'cmapx' \
+        else px._cmap(px.CMAP_ABS, args.ncolors)
     # colour scale
     if field == 'vsv':
-        cmap = px._cmap(px.CMAP_ABS, args.ncolors); clab = 'Vsv (km/s)'; ext = 'both'
+        cmap = abs_cmap; clab = 'Vsv (km/s)'; ext = 'both'
     elif field == 'dvsv':
         cmap = px._cmap('RdBu', args.ncolors); clab = 'dVsv (%)'; ext = 'both'
     elif field == 'vpvs':
@@ -152,7 +155,7 @@ def plot_group(group, profs, models, field, z_by_model, out_dir, args):
     elif field == 'xi':
         cmap = px._cmap('RdBu', args.ncolors); clab = 'xi'; ext = 'both'
     else:
-        cmap = px._cmap(px.CMAP_ABS, args.ncolors); clab = field; ext = 'both'
+        cmap = abs_cmap; clab = field; ext = 'both'
 
     allvals = np.concatenate([c['data'][np.isfinite(c['data'])].ravel() for c in cell.values()
                               if np.isfinite(c['data']).any()]) if cell else np.array([])
@@ -278,6 +281,9 @@ def main():
                     help='inches the longest profile spans in each model column')
     ap.add_argument('--gap', type=float, default=0.55, help='inches between rows')
     ap.add_argument('--ncolors', type=int, default=16)
+    ap.add_argument('--cmap', default='cmapx', choices=['cmapx', 'spectral'],
+                    help="absolute-velocity colormap: cmapx (HY's red-green-blue, warm=slow; "
+                         "default) or spectral")
     ap.add_argument('--sigma-vsv', type=float, default=1.5, dest='sigma_vsv',
                     help='abs colour range = median +- this*std over the page')
     ap.add_argument('--clim-rel', type=float, default=6.0, dest='clim_rel')

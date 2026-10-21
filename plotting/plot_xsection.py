@@ -284,6 +284,22 @@ def _sample_2d(Lon, Lat, data2d, prof_lon, prof_lat):
 CMAP_ABS = 'Spectral'
 CMAP_VPVS = 'viridis'     # Vp/Vs absolute: continuous, as on the depth maps
 
+# cmapx: HY's MATLAB absolute-velocity map (red -> orange -> yellow -> green -> cyan ->
+# blue, warm = slow), from /data/25/yuan/mfiles/mat/cmapx.mat. Anchors as printed in MATLAB.
+CMAPX_COLORS = [
+    (0.8204, 0.0039, 0.0039), (1.0000, 0.0039, 0.0039), (1.0000, 0.2926, 0.0039),
+    (1.0000, 0.5813, 0.0039), (1.0000, 0.7222, 0.0039), (0.9000, 0.9000, 0.0039),
+    (0.0039, 0.9900, 0.0000), (0.0033, 0.7546, 1.0000), (0.0039, 0.5813, 1.0000),
+    (0.0039, 0.3813, 1.0000), (0.0039, 0.0039, 1.0000), (0.0039, 0.0039, 0.8204)]
+
+
+def cmapx(n=None):
+    """HY's cmapx absolute-velocity colormap. n None/<=0 -> smooth (interpolated);
+    n>0 -> n discrete steps resampled from the smooth ramp."""
+    from matplotlib.colors import LinearSegmentedColormap
+    cm = LinearSegmentedColormap.from_list('cmapx', CMAPX_COLORS, N=256)
+    return cm.resampled(n) if n and n > 0 else cm
+
 # ── Section scale (shared by per-section and --stack; plot_stack's math) ─────
 PAGE_W_IN = 9.5     # longest section spans this many inches
 DEFAULT_VE = 3.0   # approved flat-strip look; per-section and --stack share it

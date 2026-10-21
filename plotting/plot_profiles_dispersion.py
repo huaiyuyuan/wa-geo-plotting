@@ -42,7 +42,7 @@ import plot_xsection as px                                    # geometry, colour
 from plot_site_period_maps import load_set, NAME             # node dispersion -> V[node,period]
 
 GROUP_TITLE = {'we': 'West-East', 'ns': 'North-South', 'senw': 'SE-NW'}
-GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('N', 'S'), 'senw': ('NW', 'SE')}
+GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('S', 'N'), 'senw': ('SE', 'NW')}
 
 
 def _slug(s):
