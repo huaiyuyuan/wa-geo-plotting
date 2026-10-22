@@ -114,6 +114,36 @@ def load_any_stations(path):
     return lo[good], la[good]
 
 
+def wa_mask(glon, glat):
+    """inside-WA boolean grid [nlat, nlon] from the frame's WA polygon (the same
+    Natural Earth data MapFrame drew), with plot_depth_slice's cartopy WA polygon
+    as a fallback. None if no WA polygon is available."""
+    import matplotlib.path as mpath
+    GLO, GLA = np.meshgrid(glon, glat)
+    pts = np.column_stack([GLO.ravel(), GLA.ravel()])
+    rings = None
+    try:
+        for name, rr in (getattr(t2, '_STATES', None) or {}).get('states', []):
+            if name == 'Western Australia':
+                rings = rr
+                break
+    except Exception:
+        pass
+    if rings:
+        inside = np.zeros(len(pts), bool)
+        for r in rings:
+            inside |= mpath.Path(np.asarray(r)[:, :2]).contains_points(pts)
+        return inside.reshape(GLO.shape)
+    try:                                            # fallback: cartopy admin_1 WA
+        import plot_depth_slice as pds
+        pds._load_wa()
+        if pds._WA_PATH is not None:
+            return pds._WA_PATH.contains_points(pts).reshape(GLO.shape)
+    except Exception:
+        pass
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -125,8 +155,13 @@ def main():
     ap.add_argument('--max-dist', type=float, default=0.5, help='blank cells > this (deg) from a node')
     ap.add_argument('--clim', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
                     help='colour limits (km); default 2-98th percentile of the data')
-    ap.add_argument('--cmap', default='Spectral_r', help='colormap (default Spectral_r: shallow red, deep blue)')
+    ap.add_argument('--cmap', default='Spectral',
+                    help='colormap (default Spectral: shallow warm/red, deep cool/blue)')
     ap.add_argument('--ncolors', type=int, default=0, help='discrete colour bands (0 = continuous)')
+    ap.add_argument('--alpha', type=float, default=0.85, help='field opacity (lower = softer; 1 = solid)')
+    ap.add_argument('--clip', default='wa', choices=['wa', 'none'],
+                    help='wa (default): blank cells outside WA so offshore + other states show '
+                         'as sea/grey; none: paint the field everywhere it is defined')
     ap.add_argument('--stations', nargs='+', default=None,
                     help='one or more station files (CSV or code/lat/lon), all drawn as one layer')
     ap.add_argument('--no-stations', action='store_true')
@@ -178,7 +213,18 @@ def main():
     ax = fig.add_axes([0.04, 0.06, 0.80, 0.88])
     F = t2.MapFrame(ax, ext, grat=a.grat)
 
+    # clip to WA so offshore + other states are not painted (shown as sea/grey)
+    if a.clip == 'wa':
+        wam = wa_mask(glon, glat)
+        if wam is not None:
+            ok = ok & wam
+            print(f"  clipped to WA: {int(ok.sum())} of {ok.size} cells kept")
+        else:
+            print("  (WA clip requested but no WA polygon available - not clipped)")
+
     pm = F.raster(glat, glon, Z, ok, cmap, norm, zorder=2)
+    if a.alpha < 1.0:
+        pm.set_alpha(a.alpha)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
