@@ -153,8 +153,8 @@ def main():
                     help="wa (whole state, default) | nodes (data bbox +0.5 deg) | 'lon0,lon1,lat0,lat1'")
     ap.add_argument('--dgrid', type=float, default=0.05, help='map grid step (deg)')
     ap.add_argument('--max-dist', type=float, default=0.5, help='blank cells > this (deg) from a node')
-    ap.add_argument('--clim', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
-                    help='colour limits (km); default 2-98th percentile of the data')
+    ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
+                    help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
                     help='colormap (default Spectral: shallow warm/red, deep cool/blue)')
     ap.add_argument('--ncolors', type=int, default=0, help='discrete colour bands (0 = continuous)')
@@ -162,6 +162,9 @@ def main():
     ap.add_argument('--clip', default='wa', choices=['wa', 'none'],
                     help='wa (default): blank cells outside WA so offshore + other states show '
                          'as sea/grey; none: paint the field everywhere it is defined')
+    ap.add_argument('--mask-colour', default='0.8',
+                    help="grey (or any colour) filling the masked area outside WA (default 0.8); "
+                         "'none' leaves it as the frame's sea/states")
     ap.add_argument('--stations', nargs='+', default=None,
                     help='one or more station files (CSV or code/lat/lon), all drawn as one layer')
     ap.add_argument('--no-stations', action='store_true')
@@ -194,11 +197,7 @@ def main():
     G, ok = grid_fields(lon, lat, moho[:, None], glon, glat, a.max_dist)
     Z = G[0]
 
-    if a.clim:
-        vmin, vmax = a.clim
-    else:
-        vmin = float(np.floor(np.nanpercentile(moho, 2)))
-        vmax = float(np.ceil(np.nanpercentile(moho, 98)))
+    vmin, vmax = a.clim
     cmap = matplotlib.colormaps[a.cmap]
     if a.ncolors > 0:
         cmap = cmap.resampled(a.ncolors)
@@ -213,7 +212,8 @@ def main():
     ax = fig.add_axes([0.04, 0.06, 0.80, 0.88])
     F = t2.MapFrame(ax, ext, grat=a.grat)
 
-    # clip to WA so offshore + other states are not painted (shown as sea/grey)
+    # clip to WA so offshore + other states are not painted
+    wam = None
     if a.clip == 'wa':
         wam = wa_mask(glon, glat)
         if wam is not None:
@@ -225,6 +225,11 @@ def main():
     pm = F.raster(glat, glon, Z, ok, cmap, norm, zorder=2)
     if a.alpha < 1.0:
         pm.set_alpha(a.alpha)
+
+    # cover the masked area (outside WA) with solid grey, above the field and the
+    # coast/boundary line work there, below the stations
+    if wam is not None and a.mask_colour.lower() != 'none':
+        F.veil(glat, glon, wam, colour=a.mask_colour, alpha=1.0, zorder=7)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
