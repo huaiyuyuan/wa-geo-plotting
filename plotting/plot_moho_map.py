@@ -150,14 +150,22 @@ def main():
     ap.add_argument('--moho', required=True, help='Moho grid text table (lon lat moho_km)')
     ap.add_argument('--skip-header', type=int, default=11, help='header lines to skip (default 11)')
     ap.add_argument('--extent', default='wa',
-                    help="wa (whole state, default) | nodes (data bbox +0.5 deg) | 'lon0,lon1,lat0,lat1'")
+                    help="wa (whole state, default) | nodes (data bbox +0.5 deg) | "
+                         "coverage (bbox of --coverage stations) | 'lon0,lon1,lat0,lat1'")
     ap.add_argument('--dgrid', type=float, default=0.05, help='map grid step (deg)')
     ap.add_argument('--max-dist', type=float, default=0.5, help='blank cells > this (deg) from a node')
+    ap.add_argument('--coverage', nargs='+', default=None,
+                    help='station file(s) whose neighbourhood defines where to show Moho; cells '
+                         'further than --coverage-dist from all of them are masked (e.g. a phases '
+                         '1-3 coverage version: --coverage $ST/stations.phases.1.2.3.txt)')
+    ap.add_argument('--coverage-dist', type=float, default=1.0,
+                    help='coverage radius in deg (default 1.0)')
     ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
                     help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
                     help='colormap (default Spectral: shallow warm/red, deep cool/blue)')
-    ap.add_argument('--ncolors', type=int, default=0, help='discrete colour bands (0 = continuous)')
+    ap.add_argument('--ncolors', type=int, default=16,
+                    help='discrete colour bands (default 16; 0 = continuous)')
     ap.add_argument('--alpha', type=float, default=0.85, help='field opacity (lower = softer; 1 = solid)')
     ap.add_argument('--clip', default='wa', choices=['wa', 'none'],
                     help='wa (default): blank cells outside WA so offshore + other states show '
@@ -171,6 +179,10 @@ def main():
     ap.add_argument('--station-marker', default='^')
     ap.add_argument('--station-size', type=float, default=16)
     ap.add_argument('--station-colour', default='k')
+    ap.add_argument('--station-exclude-box', nargs=4, type=float, action='append', default=[],
+                    metavar=('LON0', 'LON1', 'LAT0', 'LAT1'),
+                    help='drop stations inside this lon/lat box (repeatable); e.g. drop the '
+                         'Phase 4 eastern grid from the full map: --station-exclude-box 124.5 131 -30 -22')
     ap.add_argument('--no-units', action='store_true', help='no tectonic unit outlines')
     ap.add_argument('--no-boundaries', action='store_true', help='no major crustal boundaries')
     ap.add_argument('--tect-npz', default=None)
@@ -184,10 +196,28 @@ def main():
     print(f"Moho: {len(lon)} nodes <- {os.path.basename(a.moho)} "
           f"({moho.min():.1f}-{moho.max():.1f} km)")
 
+    # optional coverage: stations whose neighbourhood defines where Moho is shown
+    cov_lon = cov_lat = None
+    if a.coverage:
+        CL, CA = [], []
+        for sp in a.coverage:
+            if not os.path.isfile(sp):
+                print(f"  (coverage: not found, skipped: {sp})"); continue
+            clo, cla = load_any_stations(sp)
+            CL.append(clo); CA.append(cla)
+        if CL:
+            cov_lon = np.concatenate(CL); cov_lat = np.concatenate(CA)
+            print(f"  coverage: {len(cov_lon)} stations, Moho shown within {a.coverage_dist} deg")
+
     if a.extent == 'wa':
         ext = list(WA_EXTENT)
     elif a.extent == 'nodes':
         ext = [lon.min() - 0.5, lon.max() + 0.5, lat.min() - 0.5, lat.max() + 0.5]
+    elif a.extent == 'coverage':
+        if cov_lon is None:
+            sys.exit("--extent coverage needs --coverage STATIONS")
+        m = max(1.0, a.coverage_dist)
+        ext = [cov_lon.min() - m, cov_lon.max() + m, cov_lat.min() - m, cov_lat.max() + m]
     else:
         ext = [float(x) for x in a.extent.split(',')]
     glon = np.arange(ext[0], ext[1] + 1e-6, a.dgrid)
@@ -197,11 +227,25 @@ def main():
     G, ok = grid_fields(lon, lat, moho[:, None], glon, glat, a.max_dist)
     Z = G[0]
 
+    # coverage mask: only show Moho within --coverage-dist of a coverage station
+    cov_mask = None
+    if cov_lon is not None:
+        from scipy.spatial import cKDTree
+        GLO, GLA = np.meshgrid(glon, glat)
+        d, _ = cKDTree(np.column_stack([cov_lon, cov_lat])).query(
+            np.column_stack([GLO.ravel(), GLA.ravel()]))
+        cov_mask = (d <= a.coverage_dist).reshape(GLO.shape)
+        ok = ok & cov_mask
+
     vmin, vmax = a.clim
-    cmap = matplotlib.colormaps[a.cmap]
-    if a.ncolors > 0:
-        cmap = cmap.resampled(a.ncolors)
-    norm = Normalize(vmin, vmax)
+    if a.ncolors > 0:                               # discrete bands (crisp, not continuous)
+        from matplotlib.colors import BoundaryNorm
+        cmap = matplotlib.colormaps[a.cmap].resampled(a.ncolors)
+        cmap = cmap.with_extremes(under=cmap(0), over=cmap(cmap.N - 1))
+        norm = BoundaryNorm(np.linspace(vmin, vmax, a.ncolors + 1), a.ncolors)
+    else:
+        cmap = matplotlib.colormaps[a.cmap]
+        norm = Normalize(vmin, vmax)
 
     # figure sized to the projected extent aspect
     P = t2.Albers()
@@ -226,10 +270,13 @@ def main():
     if a.alpha < 1.0:
         pm.set_alpha(a.alpha)
 
-    # cover the masked area (outside WA) with solid grey, above the field and the
-    # coast/boundary line work there, below the stations
-    if wam is not None and a.mask_colour.lower() != 'none':
-        F.veil(glat, glon, wam, colour=a.mask_colour, alpha=1.0, zorder=7)
+    # cover the masked area with solid grey (outside WA, and outside coverage when
+    # given), above the field and the line work there, below the stations
+    veil_inside = wam
+    if cov_mask is not None:
+        veil_inside = cov_mask if veil_inside is None else (veil_inside & cov_mask)
+    if veil_inside is not None and a.mask_colour.lower() != 'none':
+        F.veil(glat, glon, veil_inside, colour=a.mask_colour, alpha=1.0, zorder=7)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
@@ -265,6 +312,13 @@ def main():
             print(f"  stations: {len(lo)} <- {os.path.basename(sp)}")
         if SL:
             slon = np.concatenate(SL); slat = np.concatenate(SA)
+            for x0, x1, y0, y1 in a.station_exclude_box:   # e.g. drop Phase 4 eastern grid
+                keep = ~((slon >= x0) & (slon <= x1) & (slat >= y0) & (slat <= y1))
+                n_drop = int((~keep).sum())
+                if n_drop:
+                    print(f"  excluded {n_drop} stations in box "
+                          f"[{x0:g},{x1:g},{y0:g},{y1:g}]")
+                slon, slat = slon[keep], slat[keep]
             x, y = F.xy(slon, slat)
             ax.scatter(x, y, marker=a.station_marker, s=a.station_size,
                        c=a.station_colour, edgecolors='w', linewidths=0.4, zorder=8)
