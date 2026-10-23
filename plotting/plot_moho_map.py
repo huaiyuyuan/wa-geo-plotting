@@ -201,6 +201,9 @@ def main():
     ap.add_argument('--footprint-npz', default=None, help='override config.FOOTPRINT_NPZ')
     ap.add_argument('--footprint-outline', default=None, help='override config.FOOTPRINT_OUTLINE')
     ap.add_argument('--draw-footprint', action='store_true', help='also draw the footprint outline')
+    ap.add_argument('--draw-coverage', action='store_true',
+                    help='draw the boundary of the --coverage region (handy to tune --coverage-dist '
+                         'so the effective area aligns to a target outline)')
     ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
                     help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
@@ -359,6 +362,8 @@ def main():
     if fp is not None and a.draw_footprint and fp.olon is not None:
         fx, fy = F.xy(fp.olon, fp.olat)
         ax.plot(fx, fy, color='0.15', lw=1.3, zorder=7.5)
+    if cov_mask is not None and a.draw_coverage:
+        F.outline(glat, glon, cov_mask, zorder=7.5, colors='0.15', linewidths=1.2)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
