@@ -204,6 +204,13 @@ def main():
     ap.add_argument('--draw-coverage', action='store_true',
                     help='draw the boundary of the --coverage region (handy to tune --coverage-dist '
                          'so the effective area aligns to a target outline)')
+    ap.add_argument('--clip-poly', default=None,
+                    help='lon/lat polygon file; the effective area is also restricted to inside it '
+                         '(intersected with coverage/footprint), e.g. a hand-drawn N/E boundary')
+    ap.add_argument('--draw-clip-poly', action='store_true', help='draw the --clip-poly outline')
+    ap.add_argument('--smooth-edge', type=float, default=0.0,
+                    help='smooth the effective-area boundary: Gaussian sigma in degrees (e.g. 0.3) '
+                         'to round off the scalloped coverage edge; also fills small interior holes')
     ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
                     help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
@@ -314,6 +321,17 @@ def main():
         if cov_mask is not None:
             ok = ok & cov_mask
 
+    # extra polygon clip (e.g. a hand-drawn N/E boundary), intersected with the above
+    clip_xy = None
+    clip_mask = None
+    if a.clip_poly:
+        import matplotlib.path as mpath
+        clip_xy = np.loadtxt(a.clip_poly, comments='#', usecols=(0, 1))
+        clip_mask = mpath.Path(clip_xy).contains_points(
+            np.column_stack([GLO.ravel(), GLA.ravel()])).reshape(GLO.shape)
+        ok = ok & clip_mask
+        print(f"  clip-poly: {len(clip_xy)} vertices <- {os.path.basename(a.clip_poly)}")
+
     vmin, vmax = a.clim
     if a.ncolors > 0:                               # discrete bands (crisp, not continuous)
         from matplotlib.colors import BoundaryNorm
@@ -346,16 +364,27 @@ def main():
         else:
             print("  (WA clip requested but no WA polygon available - not clipped)")
 
+    # round off the scalloped coverage edge and fill small interior holes
+    smoothed = False
+    if a.smooth_edge > 0:
+        from scipy.ndimage import gaussian_filter, binary_fill_holes
+        okf = gaussian_filter(ok.astype(float), a.smooth_edge / a.dgrid) > 0.5
+        ok = binary_fill_holes(okf) & np.isfinite(Z)
+        smoothed = True
+
     pm = F.raster(glat, glon, Z, ok, cmap, norm, zorder=2)
     if a.alpha < 1.0:
         pm.set_alpha(a.alpha)
 
     # cover the masked area with solid grey (outside WA, and outside coverage when
     # given), above the field and the line work there, below the stations
-    veil_inside = None
-    for mk in (wam, cov_mask, fp_mask):
-        if mk is not None:
-            veil_inside = mk if veil_inside is None else (veil_inside & mk)
+    if smoothed:                                    # grey matches the smoothed edge
+        veil_inside = ok
+    else:
+        veil_inside = None
+        for mk in (wam, cov_mask, fp_mask, clip_mask):
+            if mk is not None:
+                veil_inside = mk if veil_inside is None else (veil_inside & mk)
     if veil_inside is not None and a.mask_colour.lower() != 'none':
         F.veil(glat, glon, veil_inside, colour=a.mask_colour, alpha=1.0, zorder=7)
 
@@ -364,6 +393,9 @@ def main():
         ax.plot(fx, fy, color='0.15', lw=1.3, zorder=7.5)
     if cov_mask is not None and a.draw_coverage:
         F.outline(glat, glon, cov_mask, zorder=7.5, colors='0.15', linewidths=1.2)
+    if clip_xy is not None and a.draw_clip_poly:
+        cx, cy = F.xy(np.r_[clip_xy[:, 0], clip_xy[0, 0]], np.r_[clip_xy[:, 1], clip_xy[0, 1]])
+        ax.plot(cx, cy, color='orangered', lw=1.4, zorder=7.6)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
