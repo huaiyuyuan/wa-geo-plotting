@@ -208,9 +208,12 @@ def compute_extent(a, lon, lat, cov_lon, cov_lat, fp):
     return [float(x) for x in a.extent.split(',')]
 
 
-def make_norm(a, values):
-    """(cmap, norm, vmin, vmax) for a field; discrete bands when --ncolors>0."""
-    if a.clim:
+def make_norm(a, values, clim=None):
+    """(cmap, norm, vmin, vmax) for a field; discrete bands when --ncolors>0.
+    `clim` (vmin, vmax) overrides everything (used for per-panel limits)."""
+    if clim is not None:
+        vmin, vmax = clim
+    elif a.clim:
         vmin, vmax = a.clim
     elif a.moho and not a.fvs:
         vmin, vmax = 30.0, 50.0
@@ -363,6 +366,42 @@ def draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm):
     return pm
 
 
+def _wa_land_path(F):
+    """WA landmass as a matplotlib Path in projected (data) coords, for clipping
+    linework to land. None if no WA polygon is available."""
+    import matplotlib.path as mpath
+    rings = None
+    try:
+        for name, rr in (getattr(t2, '_STATES', None) or {}).get('states', []):
+            if name == 'Western Australia':
+                rings = rr
+                break
+    except Exception:
+        pass
+    if rings:
+        verts, codes = [], []
+        for r in rings:
+            r = np.asarray(r)[:, :2]
+            if len(r) < 3:
+                continue
+            x, y = F.xy(r[:, 0], r[:, 1])
+            pts = np.column_stack([x, y])
+            pts = np.vstack([pts, pts[0]])
+            verts.append(pts)
+            codes += [mpath.Path.MOVETO] + [mpath.Path.LINETO] * (len(pts) - 2) + [mpath.Path.CLOSEPOLY]
+        if verts:
+            return mpath.Path(np.vstack(verts), codes)
+    try:
+        import plot_depth_slice as pds
+        pds._load_wa()
+        if pds._WA_PATH is not None:
+            x, y = F.xy(pds._WA_PATH.vertices[:, 0], pds._WA_PATH.vertices[:, 1])
+            return mpath.Path(np.column_stack([x, y]), pds._WA_PATH.codes)
+    except Exception:
+        pass
+    return None
+
+
 def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys):
     """Tectonic domains + crustal boundaries + optional outlines, coastline overlay."""
     if fp is not None and a.draw_footprint and fp.olon is not None:
@@ -383,7 +422,26 @@ def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys):
             from domains import Domains
             tect_npz = px._resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', a.tect_npz)
             rings = [r for r in Domains(tect_npz).rings if len(r) >= 3]
-            F.lines(rings, colors=a.tect_colour, linewidths=a.tect_lw, zorder=5.5)
+            waclip = None if a.no_domains_on_mask else _wa_land_path(F)
+            if waclip is not None:
+                # draw ON TOP of the grey veil but clipped to WA land, so the
+                # domains show over the inland grey (where stations sit) too,
+                # while staying hidden offshore / out of state
+                from matplotlib.collections import LineCollection
+                lo0, lo1, la0, la1 = F.extent
+                segs = []
+                for r in rings:
+                    r = np.asarray(r)
+                    if (r[:, 0].max() < lo0 - 1 or r[:, 0].min() > lo1 + 1
+                            or r[:, 1].max() < la0 - 1 or r[:, 1].min() > la1 + 1):
+                        continue
+                    x, y = F.xy(r[:, 0], r[:, 1])
+                    segs.append(np.column_stack([x, y]))
+                lc = LineCollection(segs, colors=a.tect_colour, linewidths=a.tect_lw, zorder=7.8)
+                lc.set_clip_path(waclip, ax.transData)
+                ax.add_collection(lc)
+            else:
+                F.lines(rings, colors=a.tect_colour, linewidths=a.tect_lw, zorder=5.5)
         except Exception as e:
             print(f"  (no tectonic unit outlines: {e})")
     if not a.no_boundaries:
@@ -430,6 +488,11 @@ def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
     ncols = a.panel_cols or (2 if n <= 4 else int(np.ceil(np.sqrt(n))))
     nrows = int(np.ceil(n / ncols))
 
+    pc = {}                                   # per-panel colour limits {depth: (vmin, vmax)}
+    for s in a.panel_clim:
+        dd, lo, hi = [float(x) for x in s.split(',')]
+        pc[dd] = (lo, hi)
+
     # geometry/mask from the first depth (node positions are depth-independent)
     lon0, lat0, v0 = field_at(depths[0])
     glon, glat, GLO, GLA, _Z0, ok, cov_mask, fp_mask, clip_xy, clip_mask, add_xys = \
@@ -448,7 +511,7 @@ def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
         F = t2.MapFrame(ax, ext, grat=a.grat)
         lon, lat, v = field_at(dep)
         Z, _okd = interp_field(lon, lat, v, glon, glat, a.interp, a.max_dist)
-        cmap, norm, vmin, vmax = make_norm(a, v)
+        cmap, norm, vmin, vmax = make_norm(a, v, clim=pc.get(dep))
         pm = draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm)
         draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys)
         draw_stations(a, ax, F)
@@ -485,6 +548,9 @@ def main():
                          'panel gets its own colour bar unless --clim is given.')
     ap.add_argument('--panel-cols', type=int, default=0,
                     help='columns in the --depths panel grid (0 = auto: 2 cols for <=4 panels)')
+    ap.add_argument('--panel-clim', action='append', default=[], metavar='DEPTH,VMIN,VMAX',
+                    help='per-panel colour limits (repeatable), e.g. --panel-clim 5,2.8,3.6 ; '
+                         'depths not listed keep their auto 2-98 percentile range')
     ap.add_argument('--field', default='vsv', help='--fvs field: vsv (default), viso, xi, vpvs')
     ap.add_argument('--cbar-label', default=None, help='colorbar label (auto from source if unset)')
     ap.add_argument('--extent', default='wa',
@@ -570,6 +636,9 @@ def main():
                          "'none' keeps only the base thin black coast")
     ap.add_argument('--coast-lw', type=float, default=1.8,
                     help='overlaid coastline linewidth')
+    ap.add_argument('--no-domains-on-mask', action='store_true',
+                    help='keep tectonic domains under the grey veil (default: draw them on top '
+                         'of the veil, clipped to WA land, so they show over the inland grey too)')
     ap.add_argument('--grat', type=float, default=None, help='graticule step (deg)')
     ap.add_argument('--title', default='WA Array refined CCP Moho')
     ap.add_argument('--out', default='moho_map.png')
