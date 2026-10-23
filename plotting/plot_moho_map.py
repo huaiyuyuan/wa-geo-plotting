@@ -436,13 +436,18 @@ def main():
         add_xys.append(axy)
         print(f"  add-poly: {len(axy)} vertices <- {os.path.basename(apath)}")
 
-    # cap the mask ~coast-buffer km seaward of the WA coast (keeps the W/S edges
-    # a clean fixed distance offshore instead of cut inside the coast)
+    # extend the mask ~coast-buffer km seaward of the WA coast (grows the coastal
+    # edges that many km into the sea, so the W/S sit offshore instead of at the coast)
     if a.coast_buffer > 0:
-        wab = wa_buffer_mask(glon, glat, a.coast_buffer, a.dgrid)
-        if wab is not None:
-            ok = ok & wab
-            print(f"  coast-buffer: within ~{a.coast_buffer:g} km of the WA coast")
+        inwa = wa_mask(glon, glat)
+        if inwa is not None:
+            from scipy.ndimage import (binary_dilation, generate_binary_structure,
+                                       iterate_structure)
+            ncell = max(1, int(round(a.coast_buffer / (a.dgrid * 111.0))))
+            grown = binary_dilation(ok, structure=iterate_structure(
+                generate_binary_structure(2, 1), ncell))
+            ok = ok | (grown & ~inwa & np.isfinite(Z))   # add the sea band within ~km of the mask
+            print(f"  coast-buffer: extended ~{a.coast_buffer:g} km offshore")
         else:
             print("  (coast-buffer: no WA polygon available)")
 
