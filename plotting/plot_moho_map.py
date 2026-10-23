@@ -114,6 +114,20 @@ def load_any_stations(path):
     return lo[good], la[good]
 
 
+def wa_buffer_mask(glon, glat, km, dgrid):
+    """inside-WA boolean grid dilated by ~km (so it extends ~km seaward of the
+    coast). Uses the WA polygon via wa_mask + a morphological dilation - no
+    shapely needed. None if no WA polygon is available."""
+    base = wa_mask(glon, glat)
+    if base is None:
+        return None
+    from scipy.ndimage import (binary_dilation, generate_binary_structure,
+                               iterate_structure)
+    ncell = max(1, int(round(km / (dgrid * 111.0))))
+    st = iterate_structure(generate_binary_structure(2, 1), ncell)
+    return binary_dilation(base, structure=st)
+
+
 def interp_field(lon, lat, val, glon, glat, method, max_dist):
     """Interpolate val(lon,lat) onto the glat x glon grid. 'rbf' uses the shared
     thin-plate grid_fields; 'kriging' ordinary kriging (pykrige, falls back to rbf
@@ -241,6 +255,9 @@ def main():
     ap.add_argument('--mask-colour', default='0.8',
                     help="grey (or any colour) filling the masked area outside WA (default 0.8); "
                          "'none' leaves it as the frame's sea/states")
+    ap.add_argument('--coast-buffer', type=float, default=0.0,
+                    help='keep the mask within ~this many km of the WA coast (dilates the WA '
+                         'landmass), so the W/S edges sit ~KM offshore instead of being cut; 0 = off')
     ap.add_argument('--stations', nargs='+', default=None,
                     help='one or more station files (CSV or code/lat/lon), all drawn as one layer')
     ap.add_argument('--no-stations', action='store_true')
@@ -397,7 +414,7 @@ def main():
     # grey slivers inside the line where the smooth outline sits just seaward of
     # the jagged coast).
     wam = None
-    if a.clip == 'wa' and fp is None:
+    if a.clip == 'wa' and fp is None and a.coast_buffer <= 0:   # coast-buffer replaces it
         wam = wa_mask(glon, glat)
         if wam is not None:
             ok = ok & wam
@@ -418,6 +435,16 @@ def main():
         ok = ok | (amask & np.isfinite(Z))
         add_xys.append(axy)
         print(f"  add-poly: {len(axy)} vertices <- {os.path.basename(apath)}")
+
+    # cap the mask ~coast-buffer km seaward of the WA coast (keeps the W/S edges
+    # a clean fixed distance offshore instead of cut inside the coast)
+    if a.coast_buffer > 0:
+        wab = wa_buffer_mask(glon, glat, a.coast_buffer, a.dgrid)
+        if wab is not None:
+            ok = ok & wab
+            print(f"  coast-buffer: within ~{a.coast_buffer:g} km of the WA coast")
+        else:
+            print("  (coast-buffer: no WA polygon available)")
 
     # round off the scalloped coverage edge and fill small interior holes
     smoothed = False
@@ -453,7 +480,7 @@ def main():
     # given), above the field and the line work there, below the stations
     # grey fills everywhere not painted, matching the final effective area
     veil_inside = ok if (a.clip == 'wa' or cov_mask is not None or fp is not None
-                         or clip_mask is not None or add_xys) else None
+                         or clip_mask is not None or add_xys or a.coast_buffer > 0) else None
     if veil_inside is not None and a.mask_colour.lower() != 'none':
         F.veil(glat, glon, veil_inside, colour=a.mask_colour, alpha=1.0, zorder=7)
 
