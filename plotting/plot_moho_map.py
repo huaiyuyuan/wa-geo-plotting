@@ -532,6 +532,19 @@ def draw_stations(a, ax, F, slon, slat):
                c=a.station_colour, edgecolors='w', linewidths=0.4, zorder=8)
 
 
+def clip_to_frame(ax):
+    """Clip every graphical artist to the axes rectangle, so base-map coastlines
+    or borders can't spill into the figure margin outside the frame. Text (the
+    lon/lat tick labels, drawn just outside with annotation_clip=False) is left
+    alone so the labels survive."""
+    for art in list(ax.lines) + list(ax.collections) + list(ax.patches):
+        try:
+            art.set_clip_on(True)
+            art.set_clip_path(ax.patch)
+        except Exception:
+            pass
+
+
 def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
     """2xN panel figure: one field map per depth, shared extent/mask/style."""
     n = len(depths)
@@ -569,6 +582,7 @@ def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
         draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys,
                       data_lon, data_lat)
         draw_stations(a, ax, F, slon, slat)
+        clip_to_frame(ax)
         ax.set_title(f"{dep:g} km", fontsize=11)
         cb = fig.colorbar(pm, ax=ax, extend='both', fraction=0.046, pad=0.02)
         cb.ax.tick_params(labelsize=7)
@@ -792,6 +806,7 @@ def main():
     draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys,
                   data_lon, data_lat)
     draw_stations(a, ax, F, slon, slat)
+    clip_to_frame(ax)
 
     cax = fig.add_axes([0.86, 0.12, 0.022, 0.72])
     cb = fig.colorbar(pm, cax=cax, extend='both')
