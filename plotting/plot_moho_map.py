@@ -295,11 +295,21 @@ def main():
         cov_mask = (d <= a.coverage_dist * 111.195).reshape(GLO.shape)
         ok = ok & cov_mask
 
-    # footprint mask: Moho only inside the WA Array coverage footprint
+    # footprint mask: Moho everywhere inside the array OUTLINE (the black margin
+    # line), not just the coverage-selection mask (which has interior holes), and
+    # relaxed past --max-dist so the whole interior of the line fills in.
     fp_mask = None
     if fp is not None:
-        fp_mask = np.asarray(fp.contains(GLO.ravel(), GLA.ravel()), bool).reshape(GLO.shape)
-        ok = ok & fp_mask
+        if fp.olon is not None:
+            import matplotlib.path as mpath
+            poly = mpath.Path(np.column_stack([fp.olon, fp.olat]))
+            fp_mask = poly.contains_points(
+                np.column_stack([GLO.ravel(), GLA.ravel()])).reshape(GLO.shape)
+        else:
+            fp_mask = np.asarray(fp.contains(GLO.ravel(), GLA.ravel()), bool).reshape(GLO.shape)
+        ok = np.isfinite(Z) & fp_mask
+        if cov_mask is not None:
+            ok = ok & cov_mask
 
     vmin, vmax = a.clim
     if a.ncolors > 0:                               # discrete bands (crisp, not continuous)
