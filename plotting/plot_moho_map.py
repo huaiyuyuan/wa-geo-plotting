@@ -363,8 +363,8 @@ def draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm):
         inside_v[i0:i0 + ok.shape[0], j0:j0 + ok.shape[1]] = ok
         F.veil(gv_lat, gv_lon, inside_v, colour=a.mask_colour, alpha=1.0, zorder=7)
         _graticule_over(ax, F, F.extent, a)
-        # coastline + state borders as geographic reference OVER the grey
-        if not a.no_grey_ref:
+        # coastline + state borders as geographic reference OVER the grey (opt-in)
+        if a.grey_ref:
             S = getattr(t2, '_STATES', None) or {}
             for r in S.get('coast', []):
                 x, y = F.xy(np.asarray(r)[:, 0], np.asarray(r)[:, 1])
@@ -696,8 +696,9 @@ def main():
     ap.add_argument('--domain-reach', type=float, default=1.2,
                     help='when domains are drawn over the grey, show only the parts within this '
                          'many degrees of the data/stations (0 = whole WA landmass)')
-    ap.add_argument('--no-grey-ref', action='store_true',
-                    help='do not draw the coastline + state borders over the grey veil')
+    ap.add_argument('--grey-ref', action='store_true',
+                    help='draw the coastline + state borders over the grey veil (default: off, '
+                         'so the masked area stays clean)')
     ap.add_argument('--grat', type=float, default=None, help='graticule step (deg)')
     ap.add_argument('--title', default='WA Array refined CCP Moho')
     ap.add_argument('--out', default='moho_map.png')
