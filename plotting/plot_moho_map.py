@@ -278,6 +278,11 @@ def main():
     ap.add_argument('--bnd-lw', type=float, default=0.4,
                     help='crustal-boundary linewidth (thin by default)')
     ap.add_argument('--bnd-colour', default='k', help='crustal-boundary colour')
+    ap.add_argument('--coast-colour', default='none',
+                    help="overlay the WA coastline in this colour (e.g. 'steelblue'); "
+                         "'none' keeps only the base thin black coast")
+    ap.add_argument('--coast-lw', type=float, default=1.8,
+                    help='overlaid coastline linewidth')
     ap.add_argument('--grat', type=float, default=None, help='graticule step (deg)')
     ap.add_argument('--title', default='WA Array refined CCP Moho')
     ap.add_argument('--out', default='moho_map.png')
@@ -529,6 +534,16 @@ def main():
             print(f"crustal boundaries: {n}")
         except Exception as e:
             print(f"  (no crustal boundaries: {e})")
+
+    # optional thick coloured coastline overlay (on top of the field/veil)
+    if a.coast_colour.lower() != 'none':
+        nc = 0
+        for r in (getattr(t2, '_STATES', None) or {}).get('coast', []):
+            x, y = F.xy(r[:, 0], r[:, 1])
+            ax.plot(x, y, color=a.coast_colour, lw=a.coast_lw,
+                    solid_capstyle='round', zorder=7.7)
+            nc += 1
+        print(f"coastline overlay: {nc} ({a.coast_colour}, lw={a.coast_lw})")
 
     # all stations, one layer
     if not a.no_stations and a.stations:
