@@ -178,8 +178,14 @@ def wa_mask(glon, glat):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--moho', required=True, help='Moho grid text table (lon lat moho_km)')
+    ap.add_argument('--moho', default=None, help='Moho grid text table (lon lat moho_km)')
     ap.add_argument('--skip-header', type=int, default=11, help='header lines to skip (default 11)')
+    ap.add_argument('--fvs', default=None,
+                    help='Vs model npz (alternative to --moho): sample --field at --depth for an '
+                         'absolute-Vs map in the same style')
+    ap.add_argument('--depth', type=float, default=30.0, help='depth (km) to sample --fvs at')
+    ap.add_argument('--field', default='vsv', help='--fvs field: vsv (default), viso, xi, vpvs')
+    ap.add_argument('--cbar-label', default=None, help='colorbar label (auto from source if unset)')
     ap.add_argument('--extent', default='wa',
                     help="wa (whole state, default) | nodes (data bbox +0.5 deg) | "
                          "coverage (bbox of --coverage stations) | footprint (bbox of the WA "
@@ -221,8 +227,9 @@ def main():
     ap.add_argument('--save-outline', default=None,
                     help='write the final effective-area boundary (lon lat) to this file, to reuse '
                          'as a single mask later (e.g. via --clip-poly or --footprint-outline)')
-    ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
-                    help='colour limits (km), default 30 50; values beyond saturate to the end colours')
+    ap.add_argument('--clim', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
+                    help='colour limits; default 30 50 for --moho, 2-98th percentile for --fvs; '
+                         'values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
                     help='colormap (default Spectral: shallow warm/red, deep cool/blue)')
     ap.add_argument('--ncolors', type=int, default=16,
@@ -253,9 +260,27 @@ def main():
     ap.add_argument('--out', default='moho_map.png')
     a = ap.parse_args()
 
-    lon, lat, moho = read_moho(a.moho, a.skip_header)
-    print(f"Moho: {len(lon)} nodes <- {os.path.basename(a.moho)} "
-          f"({moho.min():.1f}-{moho.max():.1f} km)")
+    if a.fvs:                                        # absolute-Vs (or other field) at a depth
+        from domains import model_fields
+        d = dict(np.load(a.fvs, allow_pickle=True))
+        F = model_fields(d)
+        if a.field not in F:
+            sys.exit(f"{os.path.basename(a.fvs)} has no '{a.field}' (has: {', '.join(F)})")
+        lon = np.asarray(d['Lon'], float); lat = np.asarray(d['Lat'], float)
+        zc = np.asarray(d['z'], float)
+        moho = np.array([np.interp(a.depth, zc, row) for row in np.asarray(F[a.field], float)])
+        good = np.isfinite(lon) & np.isfinite(lat) & np.isfinite(moho)
+        lon, lat, moho = lon[good], lat[good], moho[good]
+        field_label = a.cbar_label or ('Vsv (km/s)' if a.field in ('vsv', 'viso') else a.field)
+        print(f"Field: {a.field} at {a.depth:g} km, {len(lon)} nodes <- "
+              f"{os.path.basename(a.fvs)} ({moho.min():.2f}-{moho.max():.2f})")
+    elif a.moho:
+        lon, lat, moho = read_moho(a.moho, a.skip_header)
+        field_label = a.cbar_label or 'Moho depth (km)'
+        print(f"Moho: {len(lon)} nodes <- {os.path.basename(a.moho)} "
+              f"({moho.min():.1f}-{moho.max():.1f} km)")
+    else:
+        sys.exit("give --moho (Moho grid) or --fvs (Vs model + --depth)")
 
     # optional coverage: stations whose neighbourhood defines where Moho is shown
     cov_lon = cov_lat = None
@@ -342,7 +367,13 @@ def main():
         ok = ok & clip_mask
         print(f"  clip-poly: {len(clip_xy)} vertices <- {os.path.basename(a.clip_poly)}")
 
-    vmin, vmax = a.clim
+    if a.clim:
+        vmin, vmax = a.clim
+    elif a.moho and not a.fvs:
+        vmin, vmax = 30.0, 50.0
+    else:
+        vmin = float(np.floor(np.nanpercentile(moho, 2) * 10) / 10)
+        vmax = float(np.ceil(np.nanpercentile(moho, 98) * 10) / 10)
     if a.ncolors > 0:                               # discrete bands (crisp, not continuous)
         from matplotlib.colors import BoundaryNorm
         cmap = matplotlib.colormaps[a.cmap].resampled(a.ncolors)
@@ -486,7 +517,7 @@ def main():
 
     cax = fig.add_axes([0.86, 0.12, 0.022, 0.72])
     cb = fig.colorbar(pm, cax=cax, extend='both')
-    cb.set_label('Moho depth (km)', fontsize=9)
+    cb.set_label(field_label, fontsize=9)
     cb.ax.tick_params(labelsize=8)
     ax.set_title(a.title, fontsize=12)
 
