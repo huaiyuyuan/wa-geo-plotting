@@ -398,14 +398,21 @@ def main():
 
     # bake the final effective-area boundary to a reusable mask file
     if a.save_outline:
+        from scipy.ndimage import binary_closing, binary_fill_holes
+        # bridge thin necks + fill holes so the region is one solid blob and its
+        # outer boundary traces as a single closed loop (no NE lobe pinched off)
+        okc = binary_fill_holes(binary_closing(ok, iterations=3, border_value=0))
         _f = plt.figure(); _axc = _f.add_subplot()
-        _cs = _axc.contour(glon, glat, ok.astype(float), levels=[0.5])
+        _cs = _axc.contour(glon, glat, okc.astype(float), levels=[0.5])
         _segs = _cs.allsegs[0] if _cs.allsegs else []
         plt.close(_f)
         if _segs:
-            seg = max(_segs, key=len)
+            def _area(s):
+                x, y = s[:, 0], s[:, 1]
+                return abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))) / 2
+            seg = max(_segs, key=_area)         # outer boundary = largest enclosed area
             np.savetxt(a.save_outline, seg, fmt='%.4f', header='lon lat  effective-area outline')
-            print(f"  saved outline: {len(seg)} vertices -> {a.save_outline}")
+            print(f"  saved outline: {len(seg)} vertices ({len(_segs)} segs) -> {a.save_outline}")
 
     pm = F.raster(glat, glon, Z, ok, cmap, norm, zorder=2)
     if a.alpha < 1.0:
