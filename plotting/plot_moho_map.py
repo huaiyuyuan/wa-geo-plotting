@@ -363,6 +363,21 @@ def draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm):
         inside_v[i0:i0 + ok.shape[0], j0:j0 + ok.shape[1]] = ok
         F.veil(gv_lat, gv_lon, inside_v, colour=a.mask_colour, alpha=1.0, zorder=7)
         _graticule_over(ax, F, F.extent, a)
+        # coastline + state borders as geographic reference OVER the grey
+        if not a.no_grey_ref:
+            S = getattr(t2, '_STATES', None) or {}
+            for r in S.get('coast', []):
+                x, y = F.xy(np.asarray(r)[:, 0], np.asarray(r)[:, 1])
+                ax.plot(x, y, color='0.5', lw=0.5, zorder=7.3)
+            for _name, rings in S.get('states', []):
+                for r in rings:
+                    r = np.asarray(r)[:, :2]
+                    x, y = F.xy(r[:, 0], r[:, 1])
+                    ax.plot(x, y, color='0.5', lw=0.5, zorder=7.3)
+            if S.get('coast') and not S.get('states'):      # WA-NT/SA 129E border
+                bl = np.linspace(-31.69, -14.87, 50)
+                x, y = F.xy(np.full_like(bl, 129.0), bl)
+                ax.plot(x, y, color='0.5', lw=0.5, zorder=7.3)
     return pm
 
 
@@ -402,7 +417,8 @@ def _wa_land_path(F):
     return None
 
 
-def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys):
+def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys,
+                  data_lon=None, data_lat=None):
     """Tectonic domains + crustal boundaries + optional outlines, coastline overlay."""
     if fp is not None and a.draw_footprint and fp.olon is not None:
         fx, fy = F.xy(fp.olon, fp.olat)
@@ -429,14 +445,29 @@ def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys):
                 # while staying hidden offshore / out of state
                 from matplotlib.collections import LineCollection
                 lo0, lo1, la0, la1 = F.extent
+                tree = None
+                if (data_lon is not None and len(data_lon) and a.domain_reach > 0):
+                    from scipy.spatial import cKDTree
+                    tree = cKDTree(np.column_stack([data_lon, data_lat]))
                 segs = []
                 for r in rings:
                     r = np.asarray(r)
                     if (r[:, 0].max() < lo0 - 1 or r[:, 0].min() > lo1 + 1
                             or r[:, 1].max() < la0 - 1 or r[:, 1].min() > la1 + 1):
                         continue
-                    x, y = F.xy(r[:, 0], r[:, 1])
-                    segs.append(np.column_stack([x, y]))
+                    if tree is None:                       # whole WA landmass
+                        x, y = F.xy(r[:, 0], r[:, 1])
+                        segs.append(np.column_stack([x, y]))
+                        continue
+                    # keep only the parts of each ring within reach of the data
+                    dd, _ = tree.query(r[:, :2])
+                    idx = np.where(dd <= a.domain_reach)[0]
+                    if idx.size < 2:
+                        continue
+                    for grp in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1):
+                        if grp.size >= 2:
+                            x, y = F.xy(r[grp, 0], r[grp, 1])
+                            segs.append(np.column_stack([x, y]))
                 lc = LineCollection(segs, colors=a.tect_colour, linewidths=a.tect_lw, zorder=7.8)
                 lc.set_clip_path(waclip, ax.transData)
                 ax.add_collection(lc)
@@ -460,9 +491,10 @@ def draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys):
                     solid_capstyle='round', zorder=7.7)
 
 
-def draw_stations(a, ax, F):
+def load_stations(a):
+    """(slon, slat) for all --stations files (exclude boxes applied), or (None, None)."""
     if a.no_stations or not a.stations:
-        return
+        return None, None
     SL, SA = [], []
     for sp in a.stations:
         if not os.path.isfile(sp):
@@ -472,11 +504,29 @@ def draw_stations(a, ax, F):
         SL.append(lo); SA.append(la)
         print(f"  stations: {len(lo)} <- {os.path.basename(sp)}")
     if not SL:
-        return
+        return None, None
     slon = np.concatenate(SL); slat = np.concatenate(SA)
     for x0, x1, y0, y1 in a.station_exclude_box:
         keep = ~((slon >= x0) & (slon <= x1) & (slat >= y0) & (slat <= y1))
         slon, slat = slon[keep], slat[keep]
+    return slon, slat
+
+
+def _data_points(cov_lon, cov_lat, slon, slat):
+    """Union of coverage + station lon/lat, used to limit domains to 'near the data'."""
+    pl, pa = [], []
+    if cov_lon is not None:
+        pl.append(cov_lon); pa.append(cov_lat)
+    if slon is not None:
+        pl.append(slon); pa.append(slat)
+    if not pl:
+        return None, None
+    return np.concatenate(pl), np.concatenate(pa)
+
+
+def draw_stations(a, ax, F, slon, slat):
+    if slon is None:
+        return
     x, y = F.xy(slon, slat)
     ax.scatter(x, y, marker=a.station_marker, s=a.station_size,
                c=a.station_colour, edgecolors='w', linewidths=0.4, zorder=8)
@@ -499,6 +549,9 @@ def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
         build_mask(a, ext, lon0, lat0, v0, cov_lon, cov_lat, fp)
     print(f"  panels: {n} depths, {nrows}x{ncols}, {int(ok.sum())} cells in effective area")
 
+    slon, slat = load_stations(a)
+    data_lon, data_lat = _data_points(cov_lon, cov_lat, slon, slat)
+
     P = t2.Albers()
     bx, by = P(np.r_[ext[0], ext[1], ext[1], ext[0]], np.r_[ext[2], ext[2], ext[3], ext[3]])
     asp = (by.max() - by.min()) / (bx.max() - bx.min())
@@ -513,8 +566,9 @@ def panels(a, ext, field_at, depths, field_label, cov_lon, cov_lat, fp):
         Z, _okd = interp_field(lon, lat, v, glon, glat, a.interp, a.max_dist)
         cmap, norm, vmin, vmax = make_norm(a, v, clim=pc.get(dep))
         pm = draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm)
-        draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys)
-        draw_stations(a, ax, F)
+        draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys,
+                      data_lon, data_lat)
+        draw_stations(a, ax, F, slon, slat)
         ax.set_title(f"{dep:g} km", fontsize=11)
         cb = fig.colorbar(pm, ax=ax, extend='both', fraction=0.046, pad=0.02)
         cb.ax.tick_params(labelsize=7)
@@ -639,6 +693,11 @@ def main():
     ap.add_argument('--no-domains-on-mask', action='store_true',
                     help='keep tectonic domains under the grey veil (default: draw them on top '
                          'of the veil, clipped to WA land, so they show over the inland grey too)')
+    ap.add_argument('--domain-reach', type=float, default=1.2,
+                    help='when domains are drawn over the grey, show only the parts within this '
+                         'many degrees of the data/stations (0 = whole WA landmass)')
+    ap.add_argument('--no-grey-ref', action='store_true',
+                    help='do not draw the coastline + state borders over the grey veil')
     ap.add_argument('--grat', type=float, default=None, help='graticule step (deg)')
     ap.add_argument('--title', default='WA Array refined CCP Moho')
     ap.add_argument('--out', default='moho_map.png')
@@ -726,9 +785,12 @@ def main():
             np.savetxt(a.save_outline, seg, fmt='%.4f', header='lon lat  effective-area outline')
             print(f"  saved outline: {len(seg)} vertices ({len(_segs)} segs) -> {a.save_outline}")
 
+    slon, slat = load_stations(a)
+    data_lon, data_lat = _data_points(cov_lon, cov_lat, slon, slat)
     pm = draw_field_veil(a, ax, F, glon, glat, ok, Z, cmap, norm)
-    draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys)
-    draw_stations(a, ax, F)
+    draw_linework(a, ax, F, glon, glat, ok, cov_mask, fp, clip_xy, add_xys,
+                  data_lon, data_lat)
+    draw_stations(a, ax, F, slon, slat)
 
     cax = fig.add_axes([0.86, 0.12, 0.022, 0.72])
     cb = fig.colorbar(pm, cax=cax, extend='both')
