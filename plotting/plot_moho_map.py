@@ -272,6 +272,12 @@ def main():
     ap.add_argument('--no-boundaries', action='store_true', help='no major crustal boundaries')
     ap.add_argument('--tect-npz', default=None)
     ap.add_argument('--bnd-npz', default=None)
+    ap.add_argument('--tect-lw', type=float, default=1.1,
+                    help='tectonic-domain edge linewidth (unfilled, thick by default)')
+    ap.add_argument('--tect-colour', default='0.25', help='tectonic-domain edge colour')
+    ap.add_argument('--bnd-lw', type=float, default=0.4,
+                    help='crustal-boundary linewidth (thin by default)')
+    ap.add_argument('--bnd-colour', default='k', help='crustal-boundary colour')
     ap.add_argument('--grat', type=float, default=None, help='graticule step (deg)')
     ap.add_argument('--title', default='WA Array refined CCP Moho')
     ap.add_argument('--out', default='moho_map.png')
@@ -509,7 +515,7 @@ def main():
             from domains import Domains
             tect_npz = px._resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', a.tect_npz)
             rings = [r for r in Domains(tect_npz).rings if len(r) >= 3]
-            n = F.lines(rings, colors='0.35', linewidths=0.3, zorder=4)
+            n = F.lines(rings, colors=a.tect_colour, linewidths=a.tect_lw, zorder=5.5)
             print(f"tectonic unit outlines: {n}")
         except Exception as e:
             print(f"  (no tectonic unit outlines: {e})")
@@ -519,7 +525,7 @@ def main():
             bnd_npz = px._resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', a.bnd_npz)
             B = np.load(bnd_npz, allow_pickle=True)
             blines = [np.asarray(ln, float)[:, :2] for ln in B['lines'] if len(ln) >= 2]
-            n = F.lines(blines, colors='k', linewidths=0.8, zorder=5)
+            n = F.lines(blines, colors=a.bnd_colour, linewidths=a.bnd_lw, zorder=5)
             print(f"crustal boundaries: {n}")
         except Exception as e:
             print(f"  (no crustal boundaries: {e})")
