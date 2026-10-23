@@ -330,9 +330,12 @@ def main():
     ax = fig.add_axes([0.04, 0.06, 0.80, 0.88])
     F = t2.MapFrame(ax, ext, grat=a.grat)
 
-    # clip to WA so offshore + other states are not painted
+    # clip to WA so offshore + other states are not painted. With --footprint the
+    # outline is the sole boundary, so skip the WA clip (it would otherwise carve
+    # grey slivers inside the line where the smooth outline sits just seaward of
+    # the jagged coast).
     wam = None
-    if a.clip == 'wa':
+    if a.clip == 'wa' and fp is None:
         wam = wa_mask(glon, glat)
         if wam is not None:
             ok = ok & wam
