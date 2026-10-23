@@ -211,14 +211,16 @@ def main():
     ap.add_argument('--smooth-edge', type=float, default=0.0,
                     help='smooth the effective-area boundary: Gaussian sigma in degrees (e.g. 0.3) '
                          'to round off the scalloped coverage edge; also fills small interior holes')
-    ap.add_argument('--add-poly', default=None,
+    ap.add_argument('--add-poly', action='append', default=[],
                     help='lon/lat polygon file whose interior is ADDED (union) to the effective '
-                         'area, e.g. to fill an eastern gap out to a hand line while keeping the '
-                         'working mask elsewhere')
+                         'area, e.g. a patch that fills the eastern or northern gap out to a hand '
+                         'line while keeping the working mask elsewhere. Repeatable.')
     ap.add_argument('--add-poly-minlon', type=float, default=None,
-                    help='only add the part of --add-poly east of this longitude (keeps the other '
-                         'sides of the line from extending the mask)')
-    ap.add_argument('--draw-add-poly', action='store_true', help='draw the --add-poly outline')
+                    help='only add the part of every --add-poly east of this longitude')
+    ap.add_argument('--draw-add-poly', action='store_true', help='draw the --add-poly outlines')
+    ap.add_argument('--save-outline', default=None,
+                    help='write the final effective-area boundary (lon lat) to this file, to reuse '
+                         'as a single mask later (e.g. via --clip-poly or --footprint-outline)')
     ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
                     help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
@@ -372,19 +374,19 @@ def main():
         else:
             print("  (WA clip requested but no WA polygon available - not clipped)")
 
-    # add (union) a polygon's interior, e.g. fill the eastern gap out to a hand line
-    # while keeping the working mask on the other sides
-    add_xy = None
-    if a.add_poly:
+    # add (union) polygon interiors, e.g. fill the eastern / northern gaps out to a
+    # hand line while keeping the working mask on the other sides
+    add_xys = []
+    for apath in a.add_poly:
         import matplotlib.path as mpath
-        add_xy = np.loadtxt(a.add_poly, comments='#', usecols=(0, 1))
-        add_mask = mpath.Path(add_xy).contains_points(
+        axy = np.loadtxt(apath, comments='#', usecols=(0, 1))
+        amask = mpath.Path(axy).contains_points(
             np.column_stack([GLO.ravel(), GLA.ravel()])).reshape(GLO.shape)
         if a.add_poly_minlon is not None:
-            add_mask = add_mask & (GLO >= a.add_poly_minlon)
-        ok = ok | (add_mask & np.isfinite(Z))
-        print(f"  add-poly: {len(add_xy)} vertices <- {os.path.basename(a.add_poly)}"
-              + (f", east of {a.add_poly_minlon}" if a.add_poly_minlon is not None else ""))
+            amask = amask & (GLO >= a.add_poly_minlon)
+        ok = ok | (amask & np.isfinite(Z))
+        add_xys.append(axy)
+        print(f"  add-poly: {len(axy)} vertices <- {os.path.basename(apath)}")
 
     # round off the scalloped coverage edge and fill small interior holes
     smoothed = False
@@ -394,6 +396,17 @@ def main():
         ok = binary_fill_holes(okf) & np.isfinite(Z)
         smoothed = True
 
+    # bake the final effective-area boundary to a reusable mask file
+    if a.save_outline:
+        _f = plt.figure(); _axc = _f.add_subplot()
+        _cs = _axc.contour(glon, glat, ok.astype(float), levels=[0.5])
+        _segs = _cs.allsegs[0] if _cs.allsegs else []
+        plt.close(_f)
+        if _segs:
+            seg = max(_segs, key=len)
+            np.savetxt(a.save_outline, seg, fmt='%.4f', header='lon lat  effective-area outline')
+            print(f"  saved outline: {len(seg)} vertices -> {a.save_outline}")
+
     pm = F.raster(glat, glon, Z, ok, cmap, norm, zorder=2)
     if a.alpha < 1.0:
         pm.set_alpha(a.alpha)
@@ -402,7 +415,7 @@ def main():
     # given), above the field and the line work there, below the stations
     # grey fills everywhere not painted, matching the final effective area
     veil_inside = ok if (a.clip == 'wa' or cov_mask is not None or fp is not None
-                         or clip_mask is not None or add_xy is not None) else None
+                         or clip_mask is not None or add_xys) else None
     if veil_inside is not None and a.mask_colour.lower() != 'none':
         F.veil(glat, glon, veil_inside, colour=a.mask_colour, alpha=1.0, zorder=7)
 
@@ -414,9 +427,10 @@ def main():
     if clip_xy is not None and a.draw_clip_poly:
         cx, cy = F.xy(np.r_[clip_xy[:, 0], clip_xy[0, 0]], np.r_[clip_xy[:, 1], clip_xy[0, 1]])
         ax.plot(cx, cy, color='orangered', lw=1.4, zorder=7.6)
-    if add_xy is not None and a.draw_add_poly:
-        px, py = F.xy(np.r_[add_xy[:, 0], add_xy[0, 0]], np.r_[add_xy[:, 1], add_xy[0, 1]])
-        ax.plot(px, py, color='orangered', lw=1.4, zorder=7.6)
+    if add_xys and a.draw_add_poly:
+        for axy in add_xys:
+            px, py = F.xy(np.r_[axy[:, 0], axy[0, 0]], np.r_[axy[:, 1], axy[0, 1]])
+            ax.plot(px, py, color='orangered', lw=1.4, zorder=7.6)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:

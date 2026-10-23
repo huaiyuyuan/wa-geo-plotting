@@ -1,0 +1,17 @@
+# Northern expansion patch (thick red line), traced from the locator image.
+# A CLOSED polygon covering the northern strip from the thick line down to ~-25,
+# unioned onto the footprint to push the north edge up to the thick line.
+# APPROXIMATE - edit vertices to match. Used by: --add-poly <this file>
+115.2 -24.3
+115.4 -22.0
+116.5 -21.8
+118.0 -21.7
+119.5 -21.8
+121.0 -22.0
+122.5 -22.3
+123.5 -22.9
+124.2 -23.8
+124.0 -25.0
+122.0 -25.2
+119.0 -25.2
+116.5 -25.0

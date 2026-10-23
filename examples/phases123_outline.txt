@@ -1,0 +1,31 @@
+# Hand-drawn phases 1-3 effective-area outline (orange line), traced from the
+# locator image against the lon/lat graticule. APPROXIMATE (~0.3-0.5 deg) - edit
+# these vertices to match your intended boundary exactly. One "lon lat" per line,
+# closed polygon (first != last is fine, it auto-closes). Used by
+#   plot_moho_map.py --clip-poly examples/phases123_outline.txt
+# to cap the effective area (intersected with the --coverage buffer).
+115.7 -22.0
+116.5 -21.7
+117.8 -21.7
+118.6 -22.1
+120.5 -22.6
+122.5 -23.0
+124.0 -24.0
+125.0 -25.5
+125.5 -27.0
+125.4 -28.5
+125.0 -30.0
+124.6 -31.3
+123.5 -32.8
+121.5 -33.9
+119.5 -34.3
+118.0 -35.3
+116.3 -34.4
+115.0 -33.2
+114.0 -31.3
+113.2 -29.0
+112.5 -27.0
+112.4 -25.3
+112.9 -23.8
+113.6 -23.0
+114.6 -22.5

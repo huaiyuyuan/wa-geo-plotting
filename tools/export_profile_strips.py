@@ -17,9 +17,12 @@ Output JSON:
   {"profiles": [
      {"short": "WE1",
       "spans": [{"d0": 0.0, "d1": 37.2, "name": "Southern Carnarvon Basin",
-                 "rgb": [0.70, 0.85, 1.0]}, ...]},
+                 "rgb": [0.70, 0.85, 1.0]}, ...],
+      "crossings": [{"d": 142.5, "scale": "lithospheric", "names": ["WAC west"]}, ...]},
      ... ]}
-d0/d1 are along-profile distance (km); rgb is 0-1.
+d0/d1/d are along-profile distance (km); rgb is 0-1. `crossings` are GSWA major
+crustal boundaries (scale lithospheric = draw thick, crustal = thinner); on by
+default, suppress with --no-boundaries.
 """
 import argparse, os, sys, json
 import numpy as np
@@ -63,6 +66,9 @@ def main():
                     help="unit class key in the npz (default 'names' = TECTNAME, fine units)")
     ap.add_argument('--colours', default='map2022', help='colour scheme (default map2022)')
     ap.add_argument('--ds', type=float, default=0.03, help='sampling step (deg)')
+    ap.add_argument('--bnd-npz', default=None, help='override wa_crustal_boundaries.npz')
+    ap.add_argument('--no-boundaries', action='store_true',
+                    help='skip GSWA major-crustal-boundary crossings (on by default)')
     ap.add_argument('--out', required=True, help='output JSON path')
     args = ap.parse_args()
 
@@ -70,6 +76,16 @@ def main():
     if not tect or not os.path.isfile(tect):
         sys.exit(f"tectonics npz not found ({tect}); set config.TECTONICS_NPZ or --tect-npz")
     index = xs.PolygonIndex.from_npz(tect, class_key=args.class_key, colours=args.colours)
+
+    bset = None
+    if not args.no_boundaries:
+        bnd = px._resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', args.bnd_npz)
+        if bnd and os.path.isfile(bnd):
+            bset = xs.BoundarySet.from_npz(bnd)
+            print(f"boundaries: {len(bset.lines)} lines from {bnd}")
+        else:
+            print(f"  (no crustal-boundaries npz found; crossings skipped. "
+                  f"set config.BOUNDARIES_NPZ or --bnd-npz)")
 
     d = np.load(args.profiles, allow_pickle=True)
     out = {'profiles': []}
@@ -81,8 +97,16 @@ def main():
         runs = xs.runs_from_samples(dist, idx, index)
         spans = [dict(d0=round(float(r.d0), 3), d1=round(float(r.d1), 3),
                       name=r.name, rgb=_hex_to_rgb(r.color)) for r in runs]
-        out['profiles'].append(dict(short=short, spans=spans))
-        print(f"  {short:8s}: {len(spans)} spans over {dist[-1]:.0f} km")
+        rec = dict(short=short, spans=spans)
+        ncr = 0
+        if bset is not None:
+            cr = bset.crossings(plon, plat, dist)
+            rec['crossings'] = [dict(d=round(float(c.dist), 3),
+                                     scale=str(c.scale) if c.scale else 'crustal',
+                                     names=[str(n) for n in c.names]) for c in cr]
+            ncr = len(cr)
+        out['profiles'].append(rec)
+        print(f"  {short:8s}: {len(spans)} spans, {ncr} boundary crossings over {dist[-1]:.0f} km")
 
     with open(args.out, 'w') as f:
         json.dump(out, f, indent=0)
