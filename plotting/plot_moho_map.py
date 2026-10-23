@@ -114,6 +114,37 @@ def load_any_stations(path):
     return lo[good], la[good]
 
 
+def interp_field(lon, lat, val, glon, glat, method, max_dist):
+    """Interpolate val(lon,lat) onto the glat x glon grid. 'rbf' uses the shared
+    thin-plate grid_fields; 'kriging' ordinary kriging (pykrige, falls back to rbf
+    if unavailable); 'cubic'/'linear' scipy griddata. Returns (Z, ok), ok True
+    where a data node is within max_dist deg."""
+    if method == 'rbf':
+        G, ok = grid_fields(lon, lat, val[:, None], glon, glat, max_dist)
+        return G[0], ok
+    GLO, GLA = np.meshgrid(glon, glat)
+    if method == 'kriging':
+        try:
+            from pykrige.ok import OrdinaryKriging
+            if len(lon) > 3000:
+                print(f"  (kriging on {len(lon)} nodes may be slow / memory-heavy)")
+            okr = OrdinaryKriging(lon, lat, val, variogram_model='spherical',
+                                  verbose=False, enable_plotting=False)
+            Zg, _ = okr.execute('grid', glon, glat)
+            Z = np.asarray(Zg, float)
+        except Exception as e:
+            print(f"  (kriging unavailable: {e}; using rbf)")
+            G, ok = grid_fields(lon, lat, val[:, None], glon, glat, max_dist)
+            return G[0], ok
+    else:
+        from scipy.interpolate import griddata
+        Z = griddata(np.column_stack([lon, lat]), val, (GLO, GLA), method=method)
+    from scipy.spatial import cKDTree
+    d, _ = cKDTree(np.column_stack([lon, lat])).query(np.column_stack([GLO.ravel(), GLA.ravel()]))
+    ok = (d <= max_dist).reshape(GLO.shape) & np.isfinite(Z)
+    return Z, ok
+
+
 def wa_mask(glon, glat):
     """inside-WA boolean grid [nlat, nlon] from the frame's WA polygon (the same
     Natural Earth data MapFrame drew), with plot_depth_slice's cartopy WA polygon
@@ -151,7 +182,8 @@ def main():
     ap.add_argument('--skip-header', type=int, default=11, help='header lines to skip (default 11)')
     ap.add_argument('--extent', default='wa',
                     help="wa (whole state, default) | nodes (data bbox +0.5 deg) | "
-                         "coverage (bbox of --coverage stations) | 'lon0,lon1,lat0,lat1'")
+                         "coverage (bbox of --coverage stations) | footprint (bbox of the WA "
+                         "Array footprint, with --footprint) | 'lon0,lon1,lat0,lat1'")
     ap.add_argument('--dgrid', type=float, default=0.05, help='map grid step (deg)')
     ap.add_argument('--max-dist', type=float, default=0.5, help='blank cells > this (deg) from a node')
     ap.add_argument('--coverage', nargs='+', default=None,
@@ -159,7 +191,16 @@ def main():
                          'further than --coverage-dist from all of them are masked (e.g. a phases '
                          '1-3 coverage version: --coverage $ST/stations.phases.1.2.3.txt)')
     ap.add_argument('--coverage-dist', type=float, default=1.0,
-                    help='coverage radius in deg (default 1.0)')
+                    help='coverage radius in deg (default 1.0; measured in projected km so the '
+                         'disc is a true circle on the map)')
+    ap.add_argument('--interp', default='rbf', choices=['rbf', 'kriging', 'cubic', 'linear'],
+                    help='field interpolation (default rbf = thin-plate spline; kriging via pykrige)')
+    ap.add_argument('--footprint', action='store_true',
+                    help='mask Moho to the WA Array coverage footprint (the array outline); use '
+                         'with --extent footprint to frame to it. This is the phases 1-3 area.')
+    ap.add_argument('--footprint-npz', default=None, help='override config.FOOTPRINT_NPZ')
+    ap.add_argument('--footprint-outline', default=None, help='override config.FOOTPRINT_OUTLINE')
+    ap.add_argument('--draw-footprint', action='store_true', help='also draw the footprint outline')
     ap.add_argument('--clim', nargs=2, type=float, default=[30.0, 50.0], metavar=('LO', 'HI'),
                     help='colour limits (km), default 30 50; values beyond saturate to the end colours')
     ap.add_argument('--cmap', default='Spectral',
@@ -209,6 +250,15 @@ def main():
             cov_lon = np.concatenate(CL); cov_lat = np.concatenate(CA)
             print(f"  coverage: {len(cov_lon)} stations, Moho shown within {a.coverage_dist} deg")
 
+    fp = None
+    if a.footprint:
+        try:
+            from footprint import Footprint
+            fp = Footprint(a.footprint_npz, a.footprint_outline)
+            print(f"  footprint: {fp.outline_source}")
+        except Exception as e:
+            print(f"  (footprint unavailable: {e})")
+
     if a.extent == 'wa':
         ext = list(WA_EXTENT)
     elif a.extent == 'nodes':
@@ -218,24 +268,38 @@ def main():
             sys.exit("--extent coverage needs --coverage STATIONS")
         m = max(1.0, a.coverage_dist)
         ext = [cov_lon.min() - m, cov_lon.max() + m, cov_lat.min() - m, cov_lat.max() + m]
+    elif a.extent == 'footprint':
+        if fp is None or fp.olon is None:
+            sys.exit("--extent footprint needs --footprint with an outline")
+        m = 0.5
+        ext = [fp.olon.min() - m, fp.olon.max() + m, fp.olat.min() - m, fp.olat.max() + m]
     else:
         ext = [float(x) for x in a.extent.split(',')]
     glon = np.arange(ext[0], ext[1] + 1e-6, a.dgrid)
     glat = np.arange(ext[2], ext[3] + 1e-6, a.dgrid)
 
-    # smooth field (thin-plate RBF), cells > max_dist from a node blanked
-    G, ok = grid_fields(lon, lat, moho[:, None], glon, glat, a.max_dist)
-    Z = G[0]
+    # interpolated field (--interp), cells > max_dist from a node blanked
+    Z, ok = interp_field(lon, lat, moho, glon, glat, a.interp, a.max_dist)
+    GLO, GLA = np.meshgrid(glon, glat)
 
-    # coverage mask: only show Moho within --coverage-dist of a coverage station
+    # coverage mask: Moho within --coverage-dist of a coverage station. Distance is
+    # in projected (Albers km) space, so a single-station disc is a true circle on
+    # the map, not a lon/lat ellipse tilted off the 121E central meridian.
     cov_mask = None
     if cov_lon is not None:
         from scipy.spatial import cKDTree
-        GLO, GLA = np.meshgrid(glon, glat)
-        d, _ = cKDTree(np.column_stack([cov_lon, cov_lat])).query(
-            np.column_stack([GLO.ravel(), GLA.ravel()]))
-        cov_mask = (d <= a.coverage_dist).reshape(GLO.shape)
+        Pp = t2.Albers()
+        sx, sy = Pp(cov_lon, cov_lat)
+        gx, gy = Pp(GLO.ravel(), GLA.ravel())
+        d, _ = cKDTree(np.column_stack([sx, sy])).query(np.column_stack([gx, gy]))
+        cov_mask = (d <= a.coverage_dist * 111.195).reshape(GLO.shape)
         ok = ok & cov_mask
+
+    # footprint mask: Moho only inside the WA Array coverage footprint
+    fp_mask = None
+    if fp is not None:
+        fp_mask = np.asarray(fp.contains(GLO.ravel(), GLA.ravel()), bool).reshape(GLO.shape)
+        ok = ok & fp_mask
 
     vmin, vmax = a.clim
     if a.ncolors > 0:                               # discrete bands (crisp, not continuous)
@@ -272,11 +336,16 @@ def main():
 
     # cover the masked area with solid grey (outside WA, and outside coverage when
     # given), above the field and the line work there, below the stations
-    veil_inside = wam
-    if cov_mask is not None:
-        veil_inside = cov_mask if veil_inside is None else (veil_inside & cov_mask)
+    veil_inside = None
+    for mk in (wam, cov_mask, fp_mask):
+        if mk is not None:
+            veil_inside = mk if veil_inside is None else (veil_inside & mk)
     if veil_inside is not None and a.mask_colour.lower() != 'none':
         F.veil(glat, glon, veil_inside, colour=a.mask_colour, alpha=1.0, zorder=7)
+
+    if fp is not None and a.draw_footprint and fp.olon is not None:
+        fx, fy = F.xy(fp.olon, fp.olat)
+        ax.plot(fx, fy, color='0.15', lw=1.3, zorder=7.5)
 
     # tectonic unit outlines (not filled) + major crustal boundaries
     if not a.no_units:
