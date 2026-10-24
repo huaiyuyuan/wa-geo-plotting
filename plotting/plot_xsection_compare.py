@@ -229,11 +229,7 @@ def main():
                                    lines=a.bnd_lines, domain_colours=a.domain_colours)
     px.plot_section._moho_interp = None
     if a.moho:
-        from scipy.interpolate import RectBivariateSpline
-        md = np.loadtxt(a.moho, skiprows=11)
-        mla, mlo = np.unique(md[:, 0]), np.unique(md[:, 1])
-        px.plot_section._moho_interp = RectBivariateSpline(
-            mla, mlo, md[:, 2].reshape(len(mla), len(mlo)), kx=1, ky=1)
+        px.plot_section._moho_interp = px.load_moho_interp(a.moho)
     secs = px._load_sections(a.load_sections)
     if a.sections:
         secs = [s for s in secs if s[4] in a.sections]

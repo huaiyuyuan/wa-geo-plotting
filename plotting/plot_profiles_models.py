@@ -59,6 +59,16 @@ def parse_model(spec):
     return dict(path=path, label=label, vel=vel)
 
 
+def moho_name(path):
+    """Short caption for a Moho file: AR23 / CCP (merged) / the file stem."""
+    b = os.path.basename(path).lower()
+    if 'ar23' in b and 'ccp' not in b:
+        return 'AusMoho AR23'
+    if 'ccp' in b:
+        return 'CCP pick' + (' (final merged)' if 'final' in b else '')
+    return os.path.splitext(os.path.basename(path))[0]
+
+
 def load_model(m, field):
     """Load one model, resolving 'auto' vel: an xi (ZT) model shown as vsv becomes
     true Vsv; otherwise the stored arrays are used as-is."""
@@ -202,6 +212,9 @@ def plot_group(group, profs, models, field, z_by_model, out_dir, args):
         x0_in = left_in + j * pitch
         fig.text((x0_in + col_w / 2) / fig_w, 1 - 0.78 / fig_h, m['label'],
                  ha='center', va='top', fontsize=12, fontweight='bold')
+        if m.get('_moho_name'):
+            fig.text((x0_in + col_w / 2) / fig_w, 1 - 1.02 / fig_h, f"Moho: {m['_moho_name']}",
+                     ha='center', va='top', fontsize=8, color='0.3')
         for i, p in enumerate(profs):
             c = cell[(i, j)]
             dist, z, data = c['dist'], c['z'], c['data']
@@ -233,8 +246,8 @@ def plot_group(group, profs, models, field, z_by_model, out_dir, args):
                         fontsize=8, fontweight='bold', color='0.3')
                 ax.text(1.005, -0.02, endR, transform=ax.transAxes, ha='left', va='top',
                         fontsize=8, fontweight='bold', color='0.3')
-            if args.moho and px.plot_section.__dict__.get('_moho_interp') is not None:
-                mi = px.plot_section._moho_interp
+            mi = m.get('_moho')
+            if mi is not None:
                 mp = np.array([float(np.ravel(mi(a, o))[0]) for a, o in zip(p['_plat'], p['_plon'])])
                 px._draw_moho(ax, dist, mp, zbot, None if args.no_moho_mask else args.moho_mask)
             # per-panel colourbar
@@ -291,7 +304,10 @@ def main():
                     help='force one colour range for every panel on every page')
     ap.add_argument('--max-node-dist', type=float, default=px.MAX_NODE_DIST, dest='max_node_dist',
                     help='blank profile points > this many deg from a model node (0 = off)')
-    ap.add_argument('--moho', default=None, help='AR23 Moho file (default: no Moho)')
+    ap.add_argument('--moho', default=None, help='Moho file drawn on every column (default: no Moho)')
+    ap.add_argument('--mohos', nargs='+', default=None, metavar='FILE|none',
+                    help="one Moho file per --models entry, in the same order ('none' = no line); "
+                         "overrides --moho, e.g. --mohos $MOHO $CMOHO")
     ap.add_argument('--no-moho-mask', action='store_true')
     ap.add_argument('--moho-mask', type=float, default=0.5, dest='moho_mask')
     ap.add_argument('--div-gap', type=float, default=0.20)
@@ -326,20 +342,28 @@ def main():
             print(f"  strips unavailable ({e}); drawing without them")
             px._GEO = None
 
-    # Moho interpolator (optional; default off)
-    px.plot_section._moho_interp = None
-    if args.moho:
-        try:
-            from scipy.interpolate import RectBivariateSpline
-            md = np.loadtxt(args.moho, skiprows=11)
-            mla = np.unique(md[:, 0]); mlo = np.unique(md[:, 1])
-            px.plot_section._moho_interp = RectBivariateSpline(
-                mla, mlo, md[:, 2].reshape(len(mla), len(mlo)), kx=1, ky=1)
-            print(f"  Moho overlay: {args.moho}")
-        except Exception as e:
-            print(f"  Moho load failed: {e}")
-
     models = [parse_model(s) for s in args.models]
+
+    # Moho per model column: --mohos (one per model, 'none' = no line) else --moho for all
+    px.plot_section._moho_interp = None
+    if args.mohos and len(args.mohos) != len(models):
+        sys.exit(f"--mohos needs one entry per model ({len(models)}), got {len(args.mohos)}")
+    cache = {}
+    for j, m in enumerate(models):
+        f = args.mohos[j] if args.mohos else args.moho
+        m['_moho'] = m['_moho_name'] = None
+        if not f or f.lower() == 'none':
+            continue
+        if f not in cache:
+            try:
+                cache[f] = px.load_moho_interp(f)
+            except Exception as e:
+                print(f"  Moho load failed ({f}): {e}")
+                cache[f] = None
+        m['_moho'] = cache[f]
+        if cache[f] is not None:
+            m['_moho_name'] = moho_name(f)
+            print(f"  {m['label']}: Moho {f}")
     print("Models (columns):")
     loaded = []
     for m in models:
