@@ -24,9 +24,10 @@ Column order in `latlon` ([lat lon] vs [lon lat]) is auto-detected from the WA
 value ranges, so it does not matter which way round it was saved.
 
 Group per profile, from `short`:
-    WE*            -> 'we'    (west-east transects)
-    SENW*, WEST    -> 'senw'  (SE-NW transects, incl. the coastal WEST line)
-    everything else-> 'ns'    (116.5E, 117.5E, NS120, ...)
+    WE*, AF        -> 'we'    (west-east transects, incl. the Albany-Fraser line)
+    SENW*          -> 'senw'  (SE-NW transects)
+    WEST, else     -> 'ns'    (coastal Perth-Basin/Darling-Fault WEST line, 116.5E,
+                               117.5E, NS120, ...)
 
 Orientation (canonical "start" vertex, so the left of every panel is the same
 geographic end and the stock endpoints come out consistent):
@@ -86,9 +87,13 @@ def _latlon_cols(arr):
 
 def _group(short):
     s = short.strip().upper()
-    if s.startswith('SENW') or s == 'WEST':   # check before the generic 'WE' prefix
-        return 'senw'                          # (WEST is the coastal SE-NW line, not a W-E one)
-    if s.startswith('WE'):
+    if s == 'WEST':            # coastal Perth-Basin / Darling-Fault line -> NS page
+        return 'ns'
+    if s == 'AF':              # Albany-Fraser line -> WE page
+        return 'we'
+    if s.startswith('SENW'):
+        return 'senw'
+    if s.startswith('WE'):     # WE1..WE5 (WEST and AF already handled above)
         return 'we'
     return 'ns'
 
