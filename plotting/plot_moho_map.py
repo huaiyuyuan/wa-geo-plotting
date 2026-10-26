@@ -274,11 +274,23 @@ def build_mask(a, ext, lon, lat, moho, cov_lon, cov_lat, fp, quiet=False):
         ok = ok & clip_mask
         say(f"  clip-poly: {len(clip_xy)} vertices <- {os.path.basename(a.clip_poly)}")
 
-    if a.clip == 'wa' and fp is None and a.coast_buffer <= 0:
-        wam = wa_mask(glon, glat)
-        if wam is not None:
-            ok = ok & wam
-            say(f"  clipped to WA: {int(ok.sum())} of {ok.size} cells kept")
+    # clip to WA land, plus an optional offshore margin of --coast-buffer km (so the
+    # W/S edges sit a few km out to sea rather than far offshore where the coastal
+    # nodes' coverage discs reach). Bigger --coast-buffer = more sea kept; 0 = the
+    # coast exactly. With --footprint the outline is the sole boundary, so skip this.
+    if a.clip == 'wa' and fp is None:
+        inwa = wa_mask(glon, glat)
+        if inwa is not None:
+            allowed = inwa
+            if a.coast_buffer > 0:
+                from scipy.ndimage import (binary_dilation, generate_binary_structure,
+                                           iterate_structure)
+                ncell = max(1, int(round(a.coast_buffer / (a.dgrid * 111.0))))
+                allowed = binary_dilation(inwa, structure=iterate_structure(
+                    generate_binary_structure(2, 1), ncell))
+            ok = ok & allowed
+            say(f"  clipped to WA +{a.coast_buffer:g} km offshore: "
+                f"{int(ok.sum())} of {ok.size} cells")
         else:
             say("  (WA clip requested but no WA polygon available - not clipped)")
 
@@ -293,19 +305,6 @@ def build_mask(a, ext, lon, lat, moho, cov_lon, cov_lat, fp, quiet=False):
         ok = ok | (amask & np.isfinite(Z))
         add_xys.append(axy)
         say(f"  add-poly: {len(axy)} vertices <- {os.path.basename(apath)}")
-
-    if a.coast_buffer > 0:
-        inwa = wa_mask(glon, glat)
-        if inwa is not None:
-            from scipy.ndimage import (binary_dilation, generate_binary_structure,
-                                       iterate_structure)
-            ncell = max(1, int(round(a.coast_buffer / (a.dgrid * 111.0))))
-            grown = binary_dilation(ok, structure=iterate_structure(
-                generate_binary_structure(2, 1), ncell))
-            ok = ok | (grown & ~inwa & np.isfinite(Z))
-            say(f"  coast-buffer: extended ~{a.coast_buffer:g} km offshore")
-        else:
-            say("  (coast-buffer: no WA polygon available)")
 
     if a.smooth_edge > 0:
         from scipy.ndimage import gaussian_filter, binary_fill_holes
@@ -677,8 +676,9 @@ def main():
                     help="grey (or any colour) filling the masked area outside WA (default 0.8); "
                          "'none' leaves it as the frame's sea/states")
     ap.add_argument('--coast-buffer', type=float, default=0.0,
-                    help='keep the mask within ~this many km of the WA coast (dilates the WA '
-                         'landmass), so the W/S edges sit ~KM offshore instead of being cut; 0 = off')
+                    help='with --clip wa: keep the mask within ~this many km of the WA coast '
+                         '(dilate the landmass), so the W/S edges sit ~KM offshore and the far-'
+                         'offshore coverage discs are cut. Bigger = more sea; 0 = the coast exactly')
     ap.add_argument('--stations', nargs='+', default=None,
                     help='one or more station files (CSV or code/lat/lon), all drawn as one layer')
     ap.add_argument('--no-stations', action='store_true')
