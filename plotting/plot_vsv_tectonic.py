@@ -88,8 +88,11 @@ def main():
         if not is_xi_model:
             sys.exit("vsv_true needs an xi (ZT) model; in a Z model the 'Vsv' array "
                      "already is Vsv - use --field vsv")
-        # Voigt isotropic average with xi = Vsh/Vsv (setup=3): Viso^2 = (2Vsv^2+Vsh^2)/3
-        data = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
+        # Voigt isotropic average: Viso^2 = (2 Vsv^2 + Vsh^2)/3 = Vsv^2 (2 + xi2)/3,
+        # xi2 = (Vsh/Vsv)^2. For setup-3 the stored Xi IS xi2; else it is linear Vsh/Vsv.
+        setup = int(np.ravel(d['setup'])[0]) if 'setup' in d.files else None
+        xi2 = d['Xi'] if setup == 3 else d['Xi'] ** 2
+        data = d['Vsv'] / np.sqrt((2.0 + xi2) / 3.0)
     # locked convention: abs velocity Spectral (warm=slow); xi RdBu around 1.0
     cmapname = {'vpvs': 'viridis', 'xi': 'RdBu', 'vsv': 'Spectral',
                 'vsv_true': 'Spectral'}[args.field]
@@ -135,7 +138,7 @@ def main():
             vmin, vmax = -clim_rel, clim_rel
             cmap = _cmap('RdBu', args.ncolors)
         elif args.field=='xi':
-            vmin,vmax = 0.90, 1.10
+            vmin,vmax = 0.85, 1.15
             cmap = _cmap(cmapname, args.ncolors)
         else:
             med,std = np.nanmedian(v_sm), np.nanstd(v_sm)

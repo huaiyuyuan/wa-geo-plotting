@@ -126,17 +126,39 @@ class Domains:
 def model_fields(d):
     """The physical fields a model carries: {'vsv': true Vsv, 'viso', 'xi', 'xi2', 'vpvs'} as
     [nodes, depth] arrays - xi models give Viso in 'Vsv' and true Vsv from xi; Vp/Vs and
-    xi only when they vary. 'xi' = the stored Xi = Vsh/Vsv (linear); 'xi2' = Xi^2 = the
-    conventional radial anisotropy (Vsh/Vsv)^2."""
+    xi only when they vary.
+
+    'xi' is the stored Xi plotted AS-IS - never re-squared. What that is depends on the run:
+      setup 3 (ZT joint runs): Xi is ALREADY (Vsh/Vsv)^2 and 'Vsv' holds Viso (verified in
+                               TransD xi2pctb.f: Vsh = Vsv*sqrt(xi)). So 'xi' and 'xi2' are
+                               BOTH the conventional radial anisotropy (Vsh/Vsv)^2 (xi2 is an
+                               alias, so --field xi2 does not double-square), and true Vsv is
+                               recovered from Viso and xi.
+      otherwise (legacy):      Xi is linear Vsh/Vsv, so 'xi' is linear and 'xi2' = Xi^2.
+    Plot xi (= what the inversion stores) directly with a diverging map centred on 1.0."""
     varies = lambda k: k in d and np.nanstd(d[k]) > 1e-4
+    setup = int(np.ravel(d['setup'])[0]) if 'setup' in d else None
     F = {}
     if varies('Xi'):
-        F['vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
-        F['viso'] = d['Vsv']
-        F['xi'] = d['Xi']
-        F['xi2'] = d['Xi'] ** 2
+        if setup == 3:                       # Xi already = (Vsh/Vsv)^2; Vsv holds Viso
+            xi2 = np.asarray(d['Xi'], float)                 # conventional radial anisotropy
+            F['xi'] = xi2                     # stored Xi IS (Vsh/Vsv)^2 -> plot directly
+            F['xi2'] = xi2                    # alias of xi, so --field xi2 never re-squares
+            F['viso'] = d['Vsv']
+            F['vsv'] = d['Vsv'] / np.sqrt((2.0 + xi2) / 3.0)
+        else:                                # legacy: Xi is linear Vsh/Vsv
+            F['vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
+            F['viso'] = d['Vsv']
+            F['xi'] = d['Xi']
+            F['xi2'] = d['Xi'] ** 2
     else:
         F['vsv'] = d['Vsv']
     if varies('Vpvs'):
         F['vpvs'] = d['Vpvs']
+    # per-depth 1-sigma uncertainty (written by add_model_error.py), for error maps.
+    # Xi_err is the 1-sigma on Xi = on (Vsh/Vsv)^2 for setup-3 ZT runs.
+    for k_in, k_out in (('Vsv_err', 'vsv_err'), ('Xi_err', 'xi_err'),
+                        ('Vpvs_err', 'vpvs_err')):
+        if k_in in d:
+            F[k_out] = np.asarray(d[k_in], float)
     return F
