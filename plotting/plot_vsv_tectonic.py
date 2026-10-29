@@ -24,6 +24,7 @@ from plot_depth_slice import (_make_ax, _add_states_ocean, _mask_wa_points,
                               _HAS_CARTOPY)
 from wa_basemap import (add_tectonic_outlines, add_tectonic_background,
                         add_crustal_boundaries, boundaries_legend)
+from deposits import add_deposit_args, overlay_deposits   # shared mineral-deposit overlay
 try:
     import cartopy.crs as ccrs
 except ImportError:
@@ -62,6 +63,7 @@ def main():
     ap.add_argument('--out', default='vsv_tectonic.png')
     import footprint as _fpmod
     _fpmod.add_args(ap)
+    add_deposit_args(ap)                       # --deposits / --greenstones / --deposit-dir
     ap.add_argument('--div-gap', type=float, default=0.20,
                     help='diverging colour maps skip +/- this band around white (0 = classic)')
     ap.add_argument('--div-white', type=float, default=0.5,
@@ -170,6 +172,9 @@ def main():
             bpath = add_crustal_boundaries(ax, args.bnd_npz, transform=tr)
             if zt == args.depths[0]:
                 boundaries_legend(ax, loc='lower left', fontsize=6)
+
+        # shared mineral-deposit / greenstone overlay, on top of the velocity field
+        overlay_deposits(ax, args, transform=tr)
 
         if fp is not None:
             fp.focus(ax, tr, veil_alpha=args.footprint_veil, zoom=not args.no_footprint_zoom)
