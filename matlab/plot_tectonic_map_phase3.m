@@ -42,7 +42,7 @@ MINDIR = '/data/25/yuan/github/wa-geo-plotting/matlab';   % where the deposit .m
 GREENSTONE_MAT = fullfile(MINDIR,'greenstones_sw_yilgarn.mat');   % belts (lon/lat, NaN-sep)
 GREENSTONE_COL = [0 0.35 0];             % deep green fill
 % deposit layers: {matfile, struct-var, marker, colour, filled?} - all sized (log) by contained metal
-DEP_SZ    = [6 520];                     % marker area range (points^2): min .. max
+DEP_SZ    = [3 260];                     % marker area range (points^2): min .. max (half of the old [6 520])
 DEP_GAMMA = 2.0;                         % >1 shrinks the small/medium, lets the giants stand out
 GOLD    = {fullfile(MINDIR,'gold_deposits.mat'),    'gold',    'o', [1.00 0.90 0.00], true };
 COPPER  = {fullfile(MINDIR,'copper_deposits.mat'),  'copper',  '^', [0.85 0.00 0.00], true };

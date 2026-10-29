@@ -9,7 +9,7 @@ function h = draw_deposits(ax, spec, szrange, gamma, projfn)
 %   draw_deposits(ax, spec)
 %   draw_deposits(ax, spec, szrange, gamma, projfn)
 %     spec    = {matfile, var, marker, colour, filled}   (see the config block below)
-%     szrange = marker area range (pts^2), default [6 520]
+%     szrange = marker area range (pts^2), default [3 260]
 %     gamma   = >1 lets the giants stand out, default 2.0
 %     projfn  = handle lon,lat -> (x,y) for the map's axes coords. Default identity
 %               (plot in lon/lat). For a GSWA-Albers map pass @wa_albers.
@@ -21,9 +21,9 @@ function h = draw_deposits(ax, spec, szrange, gamma, projfn)
 %     LITHIUM = {fullfile(MINDIR,'lithium_deposits.mat'), 'lithium', 'h', [0.60 0.20 0.80], true };
 %     NICKEL  = {fullfile(MINDIR,'nickel_deposits.mat'),  'nickel',  'h', [0.20 0.70 0.20], true };
 %     % ... after the Moho/Vs field + basemap are drawn into axes ax:
-%     if SHOW_GOLD,   draw_deposits(ax, GOLD,   [6 520], 2.0, @wa_albers); end
+%     if SHOW_GOLD,   draw_deposits(ax, GOLD,   [3 260], 2.0, @wa_albers); end
 %
-    if nargin < 3 || isempty(szrange), szrange = [6 520]; end
+    if nargin < 3 || isempty(szrange), szrange = [3 260]; end   % half of the original [6 520]
     if nargin < 4 || isempty(gamma),   gamma   = 2.0;     end
     if nargin < 5 || isempty(projfn),  projfn  = @(lo,la) deal(lo,la); end  % default lon/lat
     matfile = spec{1}; var = spec{2}; marker = spec{3}; col = spec{4}; filled = spec{5};
