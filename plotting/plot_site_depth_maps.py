@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(_HERE, '..', 'basemap'))
 import tomo2d as t2                                           # noqa: E402
 from domains import model_fields, Domains                     # noqa: E402
 
-LABEL = {'vsv': 'Vsv', 'viso': 'Viso', 'xi': 'Xi (Vsh/Vsv)', 'xi2': 'xi = (Vsh/Vsv)^2', 'vpvs': 'Vp/Vs'}
+LABEL = {'vsv': 'Vsv', 'viso': 'Viso', 'xi': 'xi = (Vsh/Vsv)^2', 'xi2': 'xi = (Vsh/Vsv)^2', 'vpvs': 'Vp/Vs'}
 
 
 def model_label(spec):
@@ -177,13 +177,13 @@ def main():
     fig = plt.figure(figsize=(W, H))
     # house rules: absolute velocity Spectral (warm = slow); xi and relative RdBu with a white
     # centre; Vp/Vs viridis
-    # xi around 1: RdBu_r (red = Vsh > Vsv, blue = Vsv > Vsh), as plot_depth_slice.py
+    # xi around 1: RdBu (blue = high xi = Vsh > Vsv / SH fast, red = low = Vsv fast)
     cmap = {'vpvs': matplotlib.colormaps['viridis']}.get(a.field, matplotlib.colormaps['Spectral'])
     if a.abs_skip and a.field in ('vsv', 'viso') and not a.rel:
         import plot_depth_slice as pds
         pds.ABS_SKIP = tuple(a.abs_skip)
         cmap = pds._cmap('Spectral', 16)
-    name = a.cmap or ('RdBu' if a.rel else 'RdBu_r' if a.field in ('xi', 'xi2') else None)
+    name = a.cmap or ('RdBu' if a.rel else 'RdBu' if a.field in ('xi', 'xi2') else None)
     if name:
         try:
             import plot_depth_slice as pds

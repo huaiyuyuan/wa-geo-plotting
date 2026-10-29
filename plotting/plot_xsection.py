@@ -135,52 +135,6 @@ def _geology_legend(fig, results, anchor_ax, ncol=4, below_in=0.62):
                title='Surface lithology - GSWA 1:500k (CC-BY-4.0)', title_fontsize=7)
 
 # ── Great circle path ─────────────────────────────────────────────────────────
-
-# ── Moho overlay file -> interpolator f(lat, lon) ─────────────────────────────
-def load_moho_interp(path, skip=None):
-    """Moho text table -> callable f(lat, lon) (km). Header lines are skipped
-    automatically (or --moho-skip N); the lon and lat columns are found by WA value
-    ranges, so 'lat lon z' (AR23) and 'lon lat z' both work. A regular lat/lon grid is
-    interpolated linearly with NaN cells kept as gaps (e.g. the refined CCP pick on the
-    AR23 grid, blank where there is no pick); scattered points use a linear
-    triangulation (NaN outside their hull)."""
-    from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
-    rows = []
-    with open(path) as fh:
-        for i, line in enumerate(fh):
-            if skip is not None and i < skip:
-                continue
-            try:
-                v = [float(x) for x in line.replace(',', ' ').split()]
-            except ValueError:
-                continue
-            if len(v) >= 3:
-                rows.append(v[:3])
-    A = np.array(rows, float)
-    if A.ndim != 2 or len(A) < 4:
-        raise ValueError(f'{path}: no lon/lat/moho table found')
-    med = np.nanmedian(A[:, :2], axis=0)
-    ilon = 0 if 105 <= med[0] <= 135 else 1
-    ilat = 1 - ilon
-    if not (-45 <= med[ilat] <= -5 and 105 <= med[ilon] <= 135):
-        raise ValueError(f'{path}: first two columns are not WA lon/lat (medians {med})')
-    lon, lat, z = A[:, ilon], A[:, ilat], A[:, 2]
-    ula, ulo = np.unique(lat), np.unique(lon)
-    if len(ula) * len(ulo) == len(z):                     # complete regular grid
-        G = np.full((len(ula), len(ulo)), np.nan)
-        G[np.searchsorted(ula, lat), np.searchsorted(ulo, lon)] = z
-        f = RegularGridInterpolator((ula, ulo), G, bounds_error=False, fill_value=np.nan)
-        kind = f'grid {len(ula)}x{len(ulo)}, {np.isfinite(G).mean() * 100:.0f}% filled'
-        fn = lambda la, lo: f(np.column_stack([np.ravel(la), np.ravel(lo)]))
-    else:
-        ok = np.isfinite(z)
-        f = LinearNDInterpolator(np.column_stack([lat[ok], lon[ok]]), z[ok])
-        kind = f'{ok.sum()} scattered points'
-        fn = lambda la, lo: f(np.ravel(la), np.ravel(lo))
-    print(f'  Moho overlay: {path} ({kind}; {np.nanmin(z):.1f}-{np.nanmax(z):.1f} km)')
-    return fn
-
-
 def _great_circle_path(lat1, lon1, lat2, lon2, ds_deg=0.08):
     """
     Sample a great circle from (lat1,lon1) to (lat2,lon2) at ~ds_deg spacing.
@@ -437,26 +391,26 @@ def _xi_ref_label(mode):
 
 
 # ── Fvs loading (optionally converting Viso -> true Vsv) ──────────────────────
-MOHO_SKIP = None              # --moho-skip N header lines (default: auto)
-XI_SQ = False                 # --xi-squared: show conventional xi = (Vsh/Vsv)^2 = Xi^2
+XI_SQ = False                 # --xi-squared: DEPRECATED no-op (Fvs Xi already IS (Vsh/Vsv)^2)
 XI_LIM = (0.90, 1.10)
-XI_TITLE = 'xi = Vsh/Vsv (blue = Vsh>Vsv)'
+XI_TITLE = 'xi = (Vsh/Vsv)^2 (blue = Vsh>Vsv)'
 
 
 def _load_fvs(path, vel='model'):
     """Fvs npz as a dict. vel='vsv_true' replaces the 'Vsv' array of an xi (ZT) model
-    (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi^2)/3), xi = Vsh/Vsv.
-    Vsv_err stays the Viso posterior error (a close proxy)."""
+    (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi)/3), where the
+    stored Xi IS xi = (Vsh/Vsv)^2 (verified in TransD xi2pctb.f). Vsv_err stays the
+    Viso posterior error (a close proxy)."""
     raw = np.load(path, allow_pickle=True)
     d = {k: raw[k] for k in raw.files}
     if vel == 'vsv_true':
         if 'Xi' not in d or np.nanstd(d['Xi']) <= 1e-4:
             sys.exit(f"--vel vsv_true needs an xi (ZT) model; in {os.path.basename(path)} "
                      f"the 'Vsv' array already is Vsv")
-        d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
+        d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi']) / 3.0)
         d['_vel'] = 'vsv_true'
-    if XI_SQ and 'Xi' in d:                  # after the Vsv conversion, which needs linear Xi
-        d['Xi'] = np.asarray(d['Xi'], float) ** 2
+    # The Fvs 'Xi' is already conventional xi = (Vsh/Vsv)^2, so it is plotted as-is.
+    # --xi-squared (XI_SQ) is a deprecated no-op kept only for backward compatibility.
     return d
 
 
@@ -978,9 +932,11 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
     _mi = None
     if moho_file:
         try:
-            _mi = load_moho_interp(moho_file, MOHO_SKIP)
-        except Exception as e:
-            print(f'  Moho load failed: {e}')
+            from scipy.interpolate import RectBivariateSpline
+            md=np.loadtxt(moho_file, skiprows=11)
+            mla=np.unique(md[:,0]); mlo=np.unique(md[:,1])
+            _mi=RectBivariateSpline(mla,mlo,md[:,2].reshape(len(mla),len(mlo)),kx=1,ky=1)
+        except Exception: pass
 
     prof=[]
     for (la1,lo1,la2,lo2,lab) in sections:
@@ -1127,7 +1083,7 @@ def main():
     ap.add_argument('--moho',      default=None,
                     help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
     ap.add_argument('--xi-squared', action='store_true',
-                    help='show conventional xi = (Vsh/Vsv)^2 (the Fvs Xi is linear Vsh/Vsv), 0.88-1.12')
+                    help='DEPRECATED no-op: the Fvs Xi is already conventional xi=(Vsh/Vsv)^2, plotted as-is')
     ap.add_argument('--xi-panel', default='xi', choices=['xi', 'dxi', 'both'],
                     help='per-section xi row(s): xi, dlnXi, or both (ZT models)')
     ap.add_argument('--xi-ref', default='depth', choices=['depth', 'global'],
@@ -1160,8 +1116,6 @@ def main():
                          '(e.g. 0.36 0.70 = orange straight to green)')
     ap.add_argument('--div-white', type=float, default=0.5,
                     help='white band at the centre of diverging maps, in colour steps (default 0.5; 0 = none)')
-    ap.add_argument('--moho-skip', type=int, default=None,
-                    help='header lines in the --moho file (default: skip non-numeric lines)')
     ap.add_argument('--moho-mask-alpha', type=float, default=0.5,
                     help='grey veil below the Moho to the bottom of the section (0-1, default 0.5)')
     ap.add_argument('--no-moho-mask', action='store_true', help='Moho line only, no grey veil')
@@ -1256,15 +1210,12 @@ def main():
     ap.add_argument('--bnd-npz',   default=None, help='override crustal-boundaries npz')
     ap.add_argument('--out-dir',   default='figures/xsections')
     args = ap.parse_args()
-    global MOHO_SKIP
-    MOHO_SKIP = args.moho_skip
     if args.abs_skip:
         global ABS_SKIP
         ABS_SKIP = tuple(args.abs_skip)
     if args.xi_squared:
-        global XI_SQ, XI_LIM, XI_TITLE
-        XI_SQ, XI_LIM = True, (0.88, 1.12)
-        XI_TITLE = 'xi = (Vsh/Vsv)$^2$ (blue = Vsh>Vsv)'
+        print("  NOTE: --xi-squared is deprecated and ignored; the Fvs Xi is already "
+              "conventional xi=(Vsh/Vsv)^2 and is plotted as-is.")
     MAX_NODE_DIST = args.max_node_dist
 
     global _GEO
@@ -1299,7 +1250,12 @@ def main():
     plot_section._moho_interp = None
     if args.moho:
         try:
-            plot_section._moho_interp = load_moho_interp(args.moho, MOHO_SKIP)
+            from scipy.interpolate import RectBivariateSpline
+            md = np.loadtxt(args.moho, skiprows=11)
+            mlats = np.unique(md[:,0]); mlons = np.unique(md[:,1])
+            mg = md[:,2].reshape(len(mlats), len(mlons))
+            plot_section._moho_interp = RectBivariateSpline(mlats, mlons, mg, kx=1, ky=1)
+            print(f'  Moho overlay loaded: {args.moho}')
         except Exception as e:
             print(f'  Moho load failed: {e}')
     print(f"  {len(d['Lon'])} nodes, {len(d['z'])} depth levels "
@@ -1480,9 +1436,13 @@ def _section_worker(sec, fvs, moho, kw, geo_args=None, vel='model', ref_args=Non
     plot_section._moho_interp = None
     if moho:
         try:
-            plot_section._moho_interp = load_moho_interp(moho, MOHO_SKIP)
-        except Exception as e:
-            print(f'  Moho load failed: {e}')
+            from scipy.interpolate import RectBivariateSpline
+            md = np.loadtxt(moho, skiprows=11)
+            mlats = np.unique(md[:,0]); mlons = np.unique(md[:,1])
+            mg = md[:,2].reshape(len(mlats), len(mlons))
+            plot_section._moho_interp = RectBivariateSpline(mlats, mlons, mg, kx=1, ky=1)
+        except Exception:
+            pass
     plot_section(d, *sec, **kw)
 
 

@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(_HERE, '..'))
 import plot_xsection as px
 
 GROUP_TITLE = {'we': 'West-East', 'ns': 'North-South', 'senw': 'SE-NW'}
-GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('S', 'N'), 'senw': ('SE', 'NW')}
+GROUP_ENDS  = {'we': ('W', 'E'), 'ns': ('N', 'S'), 'senw': ('NW', 'SE')}
 R_EARTH = 6371.0
 
 

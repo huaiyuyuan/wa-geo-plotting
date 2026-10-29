@@ -174,9 +174,34 @@ def _interp_to_grid(lon, lat, val, npts=200,
 def _plot_smooth(ax, lon, lat, val, cmap, vmin, vmax,
                  method='rbf', npts=200,
                  all_lon=None, all_lat=None, ndat=None, ndat_min=0,
-                 max_dist=0.5):
+                 max_dist=0.5, edge_fade=0.0):
     GLON, GLAT, GVAL = _interp_to_grid(lon, lat, val, npts, method=method)
-    # Apply masks in order
+    if edge_fade and edge_fade > 0:
+        # Soft coverage edge: instead of a hard NaN cut at max_dist, fade alpha from 1
+        # (within max_dist-edge_fade of a node) down to 0 at max_dist -> smooth transparent halo.
+        from scipy.spatial import cKDTree
+        dmin = cKDTree(np.column_stack([lon, lat])).query(
+            np.column_stack([GLON.ravel(), GLAT.ravel()]))[0].reshape(GLON.shape)
+        d_in = max(0.0, max_dist - edge_fade)
+        alpha = np.clip((max_dist - dmin) / max(1e-9, max_dist - d_in), 0.0, 1.0)
+        GVAL = _mask_grid_ndat(GLON, GLAT, GVAL,
+                               all_lon if all_lon is not None else lon,
+                               all_lat if all_lat is not None else lat,
+                               ndat, ndat_min)
+        GVAL = _mask_grid_to_wa(GLON, GLAT, GVAL)
+        from matplotlib.colors import Normalize
+        norm = Normalize(vmin, vmax)
+        rgba = cmap(norm(np.where(np.isfinite(GVAL), GVAL, vmin)))
+        a = alpha.copy(); a[~np.isfinite(GVAL)] = 0.0
+        rgba[..., 3] = a
+        ext = [float(GLON.min()), float(GLON.max()), float(GLAT.min()), float(GLAT.max())]
+        ikw = dict(extent=ext, origin='lower', zorder=2, interpolation='bilinear')
+        if _HAS_CARTOPY:
+            ikw['transform'] = ccrs.PlateCarree()
+        ax.imshow(rgba, **ikw)
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+        return sm, GLON, GLAT, GVAL          # ScalarMappable so the colorbar stays correct
+    # Hard edge (original): NaN beyond max_dist
     GVAL = _mask_grid_maxdist(GLON, GLAT, GVAL, lon, lat, max_dist)
     GVAL = _mask_grid_ndat(GLON, GLAT, GVAL,
                            all_lon if all_lon is not None else lon,
@@ -289,7 +314,7 @@ def main():
     field_cfg = {
         'vsv':  ('Vsv',  'Vsv (km/s)',     'dlnVsv',  'dlnVsv (%)', 'RdBu',   'RdBu'),
         'vpvs': ('Vpvs', 'Vp/Vs',          'dlnVpvs', 'dlnVpvs (%)','RdBu',   'RdBu'),
-        'xi':   ('Xi',   'xi = Vsh/Vsv',   'dlnXi',   'dlnXi (%)',  'RdBu_r', 'RdBu'),
+        'xi':   ('Xi',   'xi = (Vsh/Vsv)^2', 'dlnXi', 'dlnXi (%)',  'RdBu',   'RdBu'),
         'pani': ('Pani', 'P(aniso) %',      None,       None,        'YlOrRd', None),
     }
     fkey, flabel, dkey, dlabel, cabs_def, crel_def = field_cfg[args.field]

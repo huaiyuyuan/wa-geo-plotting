@@ -145,7 +145,7 @@ def main():
         lo, hi, st = DEFAULT_BINS[a.field]
     bounds = np.round(np.arange(lo, hi + st / 2, st), 6)
     nb = len(bounds) - 1
-    base = a.cmap or {'xi': 'RdBu_r', 'xi2': 'RdBu_r', 'vpvs': 'viridis'}.get(a.field if not shallow else 'vs', 'turbo_r')
+    base = a.cmap or {'xi': 'RdBu', 'xi2': 'RdBu', 'vpvs': 'viridis'}.get(a.field if not shallow else 'vs', 'turbo_r')
     cmap = make_cmap(base, nb)
     norm = BoundaryNorm(bounds, cmap.N)
     print(f"colour bins {lo:g}-{hi:g} every {st:g} ({nb} colours, {base})")
