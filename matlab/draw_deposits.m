@@ -15,7 +15,7 @@ function h = draw_deposits(ax, spec, szrange, gamma, projfn)
 %               (plot in lon/lat). For a GSWA-Albers map pass @wa_albers.
 %
 %   Config block to paste into a map script (toggle each layer independently):
-%     MINDIR  = '/data/25/yuan/github/wa-geo-plotting/matlab';
+%     MINDIR  = '/data/25/yuan/github/wa-geo-plotting/data/deposits';
 %     GOLD    = {fullfile(MINDIR,'gold_deposits.mat'),    'gold',    'o', [1.00 0.90 0.00], true };
 %     COPPER  = {fullfile(MINDIR,'copper_deposits.mat'),  'copper',  '^', [0.85 0.00 0.00], true };
 %     LITHIUM = {fullfile(MINDIR,'lithium_deposits.mat'), 'lithium', 'h', [0.60 0.20 0.80], true };

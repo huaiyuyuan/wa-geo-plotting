@@ -24,7 +24,7 @@ import os
 import numpy as np
 from scipy.io import loadmat
 
-DEP_AREA = (3.0, 260.0)     # marker area range (pts^2); half of the original [6 520]
+DEP_AREA = (6.0, 520.0)     # marker area range (pts^2)
 DEP_GAMMA = 2.0             # >1 lets the giants stand out
 
 # name: (matfile basename, struct var, marker, facecolor, filled)

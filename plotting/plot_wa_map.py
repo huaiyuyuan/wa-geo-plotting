@@ -60,7 +60,8 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
              footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
              projection='albers', legend='upper left', labels='major',
              label_scale=1.4, polylines=None, overlays=None, geo=None,
-             stations_label='Available', stations_size=22):
+             stations_label='Available', stations_size=22,
+             deposits='', greenstones=False, deposit_dir=None, deposit_gamma=2.0):
     """Profile lines / station map on the WA tectonic basemap, distance ticks + labels
     every tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -280,6 +281,14 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
                            fontsize=7, framealpha=0.9, title='Stations', title_fontsize=7)
             ax.add_artist(leg_s)
     import os
+    # shared mineral-deposit / greenstone overlay, on top of the geology
+    if deposits or greenstones:
+        from types import SimpleNamespace
+        from deposits import overlay_deposits, DEFAULT_DIR
+        overlay_deposits(ax, SimpleNamespace(deposits=deposits, greenstones=greenstones,
+                         deposit_dir=deposit_dir or DEFAULT_DIR, deposit_gamma=deposit_gamma),
+                         transform=tr)
+
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, 'xsection_index_map' +
                        ('.fp' if footprint is not None else '') + '.png')   # whole-WA name unchanged
@@ -335,6 +344,8 @@ def main():
     ap.add_argument('--bnd-npz', default=None)
     ap.add_argument('--litho-npz', default=None)
     ap.add_argument('--out-dir', default='.')
+    from deposits import add_deposit_args
+    add_deposit_args(ap)                       # --deposits / --greenstones / --deposit-dir
     args = ap.parse_args()
 
     sections = px._load_sections(args.sections) if args.sections else []
@@ -406,7 +417,9 @@ def main():
              bnd_npz=px._resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', args.bnd_npz),
              projection=args.index_proj, legend=args.index_legend, labels=args.index_labels,
              label_scale=args.label_scale, polylines=poly, overlays=overlays, geo=geo,
-             stations_label=args.stations_label)
+             stations_label=args.stations_label,
+             deposits=args.deposits, greenstones=args.greenstones,
+             deposit_dir=args.deposit_dir, deposit_gamma=args.deposit_gamma)
 
 
 if __name__ == '__main__':

@@ -5,3 +5,4 @@ data/*.geojson
 # Figures
 *.png
 *.pdf
+models.comparison.tgz

@@ -38,7 +38,7 @@ SHOW_COPPER     = false;   % copper  deposits - red triangles
 SHOW_LITHIUM    = false;   % lithium deposits - purple hexagons
 SHOW_NICKEL     = false;   % nickel  deposits - green hexagons
 
-MINDIR = '/data/25/yuan/github/wa-geo-plotting/matlab';   % where the deposit .mat files live
+MINDIR = '/data/25/yuan/github/wa-geo-plotting/data/deposits';   % where the deposit .mat files live
 GREENSTONE_MAT = fullfile(MINDIR,'greenstones_sw_yilgarn.mat');   % belts (lon/lat, NaN-sep)
 GREENSTONE_COL = [0 0.35 0];             % deep green fill
 % deposit layers: {matfile, struct-var, marker, colour, filled?} - all sized (log) by contained metal
