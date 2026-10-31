@@ -11,6 +11,11 @@ that for your machine. Others *can* use it with their own shapefiles + an Fvs-fo
 **Cheatsheet - every figure, its paths and exact command: [docs/CHEATSHEET.md](docs/CHEATSHEET.md)** 
 (`source env_stage6.sh` first).
 
+**WA Array focus-area model maps (Moho / Vp-Vs / Vsv / ξ / amplitude + tectonic):
+[docs/wa-array-maps-cheatsheet.md](docs/wa-array-maps-cheatsheet.md)** — smooth (contourf)
+maps on one shared footprint + cut boundary, with the red Yilgarn craton contour, built
+with `plotting/plot_wa_map.py` (see "WA Array focus-area maps" below).
+
 ## Layout
 ```
 config.py              # ALL local paths (shapefiles, Moho, stations, derived npz) — edit this
@@ -111,6 +116,32 @@ exact colour maps; `matlab/wa_albers.m` is the map projection.
 Craton, Perth Basin, Albany-Fraser, Capricorn; more commented out). `plot_domain_profiles.py`
 draws their mean profiles (Vsv, Viso, xi, Vp/Vs) with lateral spread and writes the tables;
 `--ref-domain yilgarn` makes the dln maps and sections relative to the Yilgarn mean.
+
+## WA Array focus-area maps (`plotting/plot_wa_map.py`)
+
+Standalone map plotter for the WA Array focus area, on the GSWA 2022 tectonic basemap.
+Draws scalar model fields (Moho depth, Moho amplitude, crustal-average Vsv, radial
+anisotropy ξ, station Vp/Vs) as **smooth contourf maps** that all share one footprint,
+one cut boundary, and the red Yilgarn craton contour — plus tectonic maps with greenstone
+fill and mineral-deposit overlays. Full commands and flags:
+**[docs/wa-array-maps-cheatsheet.md](docs/wa-array-maps-cheatsheet.md)**.
+
+Key capabilities (all optional flags on `plot_wa_map.py`):
+- **Fields:** `--moho-grid` (CCP Moho `.mat`), `--moho-amp` (pvh.6 cube peak), `--vsavg`/`--xiavg`
+  with `--avg-window A B` (depth-window averages; `moho` = that node's Moho), `--hk` (per-station
+  Vp/Vs or H-K Moho, kriged).
+- **Footprint:** `--cut-poly data/masks/wa_array_cut.txt` (keep the SW side; clips field + stations;
+  `--draw-cut` to see it), `--clip-stations` (match the Vp/Vs station footprint), `--moho-fill-hk`
+  (fill the Moho north/gaps beyond the CCP grid with the H-K station Moho), `--no-stn-mask`.
+- **Geology:** `--yilgarn` overlays the parsed GSWA Yilgarn rock-type polygons (`data/geology/`),
+  `--yilgarn-fill greenstone|all|none`, `--yilgarn-bounds craton|all|none` (red craton outline).
+- **Deposits:** `--deposits gold,copper,lithium,nickel` via `plotting/deposits.py`.
+- **Style:** contourf by default, 16 colours, colorbar ticks snapped to round numbers; colormaps
+  `parula`/`rwb`/`rgb`/`turbo` or a `.mat` file.
+
+The Yilgarn geology (`data/geology/yilgarn_units.npz`, `yilgarn_boundaries.npz`) is parsed from
+the GSWA shapefiles with a pure-Python reader (Web-Mercator → lon/lat); the cut boundary lives in
+`data/masks/wa_array_cut.txt`.
 
 ## Relation to noise_asdf
 The inversion pipeline (noise_asdf) produces the Fvs npz this toolkit plots.

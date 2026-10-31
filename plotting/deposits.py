@@ -24,7 +24,7 @@ import os
 import numpy as np
 from scipy.io import loadmat
 
-DEP_AREA = (6.0, 520.0)     # marker area range (pts^2)
+DEP_AREA = (3.0, 260.0)     # marker area range (pts^2); half of the original [6 520]
 DEP_GAMMA = 2.0             # >1 lets the giants stand out
 
 # name: (matfile basename, struct var, marker, facecolor, filled)
@@ -39,7 +39,9 @@ GREENSTONE_VAR = 'greenstones'
 GREENSTONE_COLOR = (0.0, 0.35, 0.0)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DIR = os.path.abspath(os.path.join(_HERE, '..', 'matlab'))   # repo matlab/
+# bundled under data/deposits/ ($WA_DEPOSIT_DIR overrides); the repo matlab/ was the old home
+DEFAULT_DIR = os.environ.get('WA_DEPOSIT_DIR',
+                             os.path.abspath(os.path.join(_HERE, '..', 'data', 'deposits')))
 
 
 def _xy(lon, lat, xform):
@@ -106,6 +108,26 @@ def draw_greenstones(ax, matfile, color=GREENSTONE_COLOR, alpha=0.5,
         ax.fill(np.asarray(x), np.asarray(y), **kw)
         n += 1
     print(f"greenstones: {n} rings")
+
+
+def legend_handles(names, size=8):
+    """Line2D proxy handles for a legend, one per active commodity (fixed marker size
+    — the on-map size encodes magnitude, the legend just identifies the commodity)."""
+    from matplotlib.lines import Line2D
+    if isinstance(names, str):
+        names = [s.strip() for s in names.split(',') if s.strip()]
+    hs = []
+    for nm in names:
+        if nm not in DEPOSITS:
+            continue
+        _, _, marker, col, filled = DEPOSITS[nm]
+        if filled:
+            hs.append(Line2D([], [], marker=marker, color='none', markerfacecolor=col,
+                             markeredgecolor='k', markersize=size, label=nm.capitalize()))
+        else:
+            hs.append(Line2D([], [], marker=marker, color='none', markerfacecolor='none',
+                             markeredgecolor=col, markersize=size, label=nm.capitalize()))
+    return hs
 
 
 def add_deposit_args(ap):

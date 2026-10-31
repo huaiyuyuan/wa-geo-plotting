@@ -303,10 +303,11 @@ def map2022_unit_shapes(npz=None, clip_box=None):
 
 
 def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
-                      edgecolor='0.3', lw=0.2, alpha=1.0, verbose=True):
+                      edgecolor='0.3', lw=0.2, alpha=1.0, verbose=True, fill=True):
     """GSWA 10M tectonic units filled like the 2022 Simplified Tectonic Map of WA
     (see map2022_unit_shapes). Rings of one unit form one compound path (holes are
-    holes); units are drawn big-first so inliers sit on top.
+    holes); units are drawn big-first so inliers sit on top. fill=False draws the
+    unit (terrane) boundaries only, no colour fill.
     Returns {source: n_units} for the colour sources used."""
     from matplotlib.collections import PathCollection
     shapes, src = map2022_unit_shapes(npz, clip_box)
@@ -316,7 +317,8 @@ def add_map2022_units(ax, npz=None, transform=None, clip_box=None, zorder=0,
         P = lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]
     paths = [_compound([P(r) for r in sh['rings']] if pre else sh['rings']) for sh in shapes]
     kw = {'transform': ax.transData if pre else transform} if transform is not None else {}
-    ax.add_collection(PathCollection(paths, facecolors=[sh['colour'] for sh in shapes],
+    faces = [sh['colour'] for sh in shapes] if fill else 'none'
+    ax.add_collection(PathCollection(paths, facecolors=faces,
                                      edgecolors=edgecolor, linewidths=lw, alpha=alpha,
                                      zorder=zorder, **kw))
     if verbose:
@@ -341,7 +343,9 @@ def _narrow_font():
 
 
 def add_map2022_legend(ax, loc='upper left', width_in=3.2, anchor=None, fontsize=7,
-                       title='Tectonic units: rock type and age (GSWA 2022, CC BY 4.0)', zorder=22):
+                       title='Tectonic units: rock type and age (GSWA 2022, CC BY 4.0)', zorder=22,
+                       rock_labels=True, axis_labels=True, sub_labels=True,
+                       era_scale=1.0, era_bold=False):
     """The legend chart of the GSWA 2022 simplified tectonic map (rock type x age), redrawn
     as vectors from tectonic_map_2022_legend.json (extract/make_map2022_assets.py), on a
     white panel width_in wide. loc = corner; anchor = (x, y) axes fraction of that corner.
@@ -386,12 +390,26 @@ def add_map2022_legend(ax, loc='upper left', width_in=3.2, anchor=None, fontsize
     fam = _narrow_font()
     renderer = fig.canvas.get_renderer()
     for t in L['texts']:
+        is_rot  = bool(t['rot'])
+        is_era  = (not is_rot) and t['x0'] >= 120             # era names on the right
+        is_sub  = (not is_rot) and (not is_era) and t['x0'] >= 40   # centre sub-eras (Cenozoic...)
+        is_axis = (not is_rot) and (not is_era) and (not is_sub)    # left Age(Ma) + numbers
+        if is_rot  and not rock_labels:  continue             # rock-type column headers
+        if is_sub  and not sub_labels:   continue             # centre sub-era labels
+        if is_axis and not axis_labels:  continue
+        big = is_era and (era_scale != 1.0 or era_bold)
         if t['rot']:
-            xy, length = ((t['x0'] + t['x1']) / 2, (t['y0'] + t['y1']) / 2), t['y1'] - t['y0']
+            xy, length, ha = ((t['x0'] + t['x1']) / 2, (t['y0'] + t['y1']) / 2), t['y1'] - t['y0'], 'center'
+        elif big:                                             # enlarged era names, right-aligned
+            xy, length, ha = (t['x1'], t['y'] + 0.42 * t['size']), t['x1'] - t['x0'], 'right'
         else:
-            xy, length = ((t['x0'] + t['x1']) / 2, t['y'] + 0.42 * t['size']), t['x1'] - t['x0']
-        txt = ia.text(*xy, t['s'], rotation=t['rot'], ha='center', va='center',
-                      fontsize=t['size'] * pt, family=fam)
+            xy, length, ha = ((t['x0'] + t['x1']) / 2, t['y'] + 0.42 * t['size']), t['x1'] - t['x0'], 'center'
+        wt = 'bold' if (is_era and era_bold) else 'normal'
+        txt = ia.text(*xy, t['s'], rotation=t['rot'], ha=ha, va='center',
+                      fontsize=t['size'] * pt * (era_scale if is_era else 1.0),
+                      family=fam, weight=wt)
+        if big:                                               # keep enlarged labels big (no shrink-to-fit)
+            continue
         bb = txt.get_window_extent(renderer)
         got = (bb.height if t['rot'] else bb.width) * 72.0 / fig.dpi
         want = length * pt
@@ -411,17 +429,19 @@ _LABEL_STYLE = {      # class -> colour, weight; letter-spaced = orogens (as on 
 }
 
 
-def map2022_label_items(level=1, clip_box=None):
+def map2022_label_items(level=1, clip_box=None, exclude_class=None):
     """Unit labels of tectonic_map_2022_labels.csv as drawn: [{text, lon, lat, angle,
-    colour, weight, size_pt}] (orogen names letter-spaced with plain spaces)."""
+    colour, weight, size_pt}] (orogen names letter-spaced with plain spaces).
+    exclude_class = iterable of classes to skip (e.g. {'terrane'} for province-level)."""
     import csv
+    excl = set(exclude_class) if exclude_class else set()
     path = os.path.join(_HERE, 'tectonic_map_2022_labels.csv')
     if not os.path.isfile(path):
         print(f"  (no {path}: unit labels not drawn)")
         return []
     out = []
     for r in csv.DictReader(l for l in open(path, encoding='utf-8') if not l.startswith('#')):
-        if int(r['level']) > level:
+        if int(r['level']) > level or r['class'] in excl:
             continue
         lon, lat = float(r['lon']), float(r['lat'])
         if clip_box is not None and not (clip_box[0] <= lon <= clip_box[1]
@@ -435,24 +455,31 @@ def map2022_label_items(level=1, clip_box=None):
             text = '\n'.join('   '.join(' '.join(w) for w in line.split(' '))
                              for line in text.split('\n'))
         out.append(dict(text=text, lon=lon, lat=lat, angle=float(r['angle']), colour=col,
-                        weight='bold' if int(r['bold']) else wt, size_pt=float(r['size_pt'])))
+                        weight='bold' if int(r['bold']) else wt, size_pt=float(r['size_pt']),
+                        cls=r['class']))
     return out
 
 
 def add_map2022_labels(ax, transform=None, level=1, scale=1.4, clip_box=None, zorder=6.8,
-                       halo=True):
+                       halo=True, color=None, exclude_class=None,
+                       other_scale=1.0, full_classes=('craton',), full_names=()):
     """Unit names at the GSWA 2022 map's own label positions (tectonic_map_2022_labels.csv):
     cratons red bold, terranes/inliers red, orogens grey letter-spaced, basins and provinces
     black. level 1 = major units only, 2 = all. scale multiplies the A4 map's font sizes.
-    Angles are the map's (Albers screen angles). Returns the number drawn."""
+    color overrides every label's colour (e.g. 'k' for all-black, more legible than the red
+    terranes). other_scale (<1) shrinks every label whose class is NOT in full_classes and
+    whose text contains none of full_names (e.g. keep cratons + 'KIMBERLEY' big, halve the
+    rest). Angles are the map's (Albers screen angles). Returns the number drawn."""
     import matplotlib.patheffects as pe
     fam = _narrow_font()
     eff = [pe.withStroke(linewidth=1.8, foreground='white', alpha=0.75)] if halo else None
     kw = {'transform': transform} if transform is not None else {}
-    items = map2022_label_items(level, clip_box)
+    items = map2022_label_items(level, clip_box, exclude_class)
     for it in items:
-        ax.text(it['lon'], it['lat'], it['text'], color=it['colour'],
-                fontsize=it['size_pt'] * scale, family=fam, weight=it['weight'],
+        full = (it['cls'] in full_classes) or any(nm in it['text'] for nm in full_names)
+        s = scale if full else scale * other_scale
+        ax.text(it['lon'], it['lat'], it['text'], color=(color or it['colour']),
+                fontsize=it['size_pt'] * s, family=fam, weight=it['weight'],
                 rotation=it['angle'], rotation_mode='anchor', ha='center', va='center',
                 multialignment='center', linespacing=1.0, zorder=zorder, path_effects=eff,
                 clip_on=True, **kw)
@@ -520,6 +547,65 @@ def boundaries_legend(ax, loc='lower left', fontsize=7, color='k', lw_litho=1.3,
                     handlelength=2.2, borderpad=0.4, labelspacing=0.3)
     leg.set_zorder(21)
     return leg
+
+
+def add_yilgarn_units(ax, units_npz, transform=None, zorder=4.3,
+                      fill_types=('greenstone',), colour_override=None,
+                      edgecolor='none', lw=0.0, alpha=1.0, verbose=True):
+    """Fill Yilgarn rock-type polygons (yilgarn_units.npz) for the given rock types
+    (default greenstones only). Rings are grouped per polygon (rec_idx) so holes are
+    holes. colour_override paints every filled type one colour; else each type uses its
+    rock_colours entry."""
+    from matplotlib.collections import PathCollection
+    from collections import defaultdict
+    d = np.load(units_npz, allow_pickle=True)
+    rings = d['rings']; rec = d['rec_idx']; rock = d['rocktype'].astype(str)
+    rc = {str(k): str(v) for k, v in d['rock_colours']} if 'rock_colours' in d.files else {}
+    want = set(fill_types)
+    proj = getattr(ax, 'projection', None)
+    pre = proj is not None and hasattr(transform, 'transform_points')
+    P = (lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]) if pre else (lambda r: r)
+    groups = defaultdict(list); gtype = {}
+    for i in range(len(rings)):
+        if rock[i] in want:
+            groups[int(rec[i])].append(np.asarray(rings[i], float)); gtype[int(rec[i])] = rock[i]
+    paths, faces = [], []
+    for k, rr in groups.items():
+        paths.append(_compound([P(r) for r in rr]))
+        faces.append(colour_override or rc.get(gtype[k], '#2f8f5b'))
+    kw = {'transform': ax.transData if pre else transform} if transform is not None else {}
+    ax.add_collection(PathCollection(paths, facecolors=faces, edgecolors=edgecolor,
+                                     linewidths=lw, alpha=alpha, zorder=zorder, **kw))
+    if verbose:
+        print(f"  yilgarn units: filled {len(paths)} polygons ({', '.join(sorted(want))})")
+    return len(paths)
+
+
+def add_yilgarn_boundaries(ax, bnd_npz, transform=None, zorder=4.6,
+                           craton_color='red', domain_color='0.4',
+                           lw_craton=1.4, lw_domain=0.6, alpha=0.9,
+                           kinds=('craton', 'domain'), verbose=True):
+    """Yilgarn craton outline (kind='craton' -> red) and internal terrane/domain
+    boundaries (kind='domain' -> grey) from yilgarn_boundaries.npz. `kinds` selects
+    which to draw, e.g. ('craton',) for the red outline only."""
+    from matplotlib.collections import LineCollection
+    d = np.load(bnd_npz, allow_pickle=True)
+    lines = d['lines']; kind = d['kind'].astype(str)
+    proj = getattr(ax, 'projection', None)
+    pre = proj is not None and hasattr(transform, 'transform_points')
+    P = (lambda r: proj.transform_points(transform, r[:, 0], r[:, 1])[:, :2]) if pre else (lambda r: np.asarray(r))
+    kw = {'transform': ax.transData if pre else transform} if transform is not None else {}
+    drawn = {}
+    for ksel, col, lw in (('domain', domain_color, lw_domain), ('craton', craton_color, lw_craton)):
+        if ksel not in kinds:
+            continue
+        segs = [P(np.asarray(lines[i], float)) for i in range(len(lines)) if kind[i] == ksel]
+        if segs:
+            ax.add_collection(LineCollection(segs, colors=col, linewidths=lw, alpha=alpha,
+                                             zorder=zorder, **kw))
+            drawn[ksel] = len(segs)
+    if verbose:
+        print("  yilgarn boundaries: " + ", ".join(f"{v} {k}" for k, v in drawn.items()))
 
 
 def tectonic_legend(ax, loc='lower left', fontsize=7, ncol=1, clip_box=None,

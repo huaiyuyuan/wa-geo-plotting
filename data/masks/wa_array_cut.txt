@@ -1,0 +1,20 @@
+# WA Array focus-area cut line v4 - keep NW Carnarvon coast high (as before),
+# trim ONLY the central-north (Pilbara/Capricorn) to the purple line. SE unchanged (v2).
+# lon      lat
+113.3   -21.00
+114.5   -21.50
+115.5   -22.20
+116.5   -22.80
+118.5   -22.80
+120.0   -23.20
+120.8   -24.00
+121.5   -24.80
+122.4   -25.60
+123.4   -26.70
+124.3   -27.90
+125.0   -29.10
+125.5   -30.30
+125.9   -31.70
+126.2   -33.10
+126.6   -34.50
+126.9   -35.50
