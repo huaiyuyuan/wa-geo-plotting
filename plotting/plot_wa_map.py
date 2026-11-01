@@ -83,6 +83,26 @@ def _resolve_cmap(spec):
         cm = LinearSegmentedColormap.from_list('rgb', [
             (0.63, 0.09, 0.16), (0.88, 0.40, 0.22), (0.62, 0.70, 0.35),
             (0.38, 0.70, 0.40), (0.26, 0.62, 0.62), (0.26, 0.42, 0.72), (0.30, 0.22, 0.60)])
+    elif base == 'tdm2':                      # muted model-age ramp (few soft hues): young
+        cm = LinearSegmentedColormap.from_list('tdm2', [   # green -> tan -> old pale pink
+            (0.42, 0.62, 0.40), (0.72, 0.78, 0.49), (0.85, 0.81, 0.64),
+            (0.85, 0.66, 0.70), (0.91, 0.85, 0.89)])
+    elif base == 'tdm2age':                   # Smithies (2022)-style: young cyan -> old near-white,
+        # anchors pinned at the 10 official-bin centres (0.05..0.95) so sampling returns them
+        # exactly. White top (oldest), strong mid-range steps for Yilgarn contrast.
+        cm = LinearSegmentedColormap.from_list('tdm2age', [
+            (0.00, (0.25, 0.73, 0.76)),       # cyan (youngest, ~1250-1905)
+            (0.05, (0.25, 0.73, 0.76)),
+            (0.15, (0.24, 0.62, 0.52)),       # teal-green
+            (0.25, (0.36, 0.63, 0.37)),       # green
+            (0.35, (0.62, 0.76, 0.44)),       # yellow-green
+            (0.45, (0.84, 0.87, 0.55)),       # pale yellow
+            (0.55, (0.95, 0.83, 0.50)),       # gold
+            (0.65, (0.91, 0.69, 0.45)),       # tan / orange-brown
+            (0.75, (0.83, 0.56, 0.56)),       # dusky rose
+            (0.85, (0.87, 0.70, 0.78)),       # mauve-pink
+            (0.95, (0.97, 0.95, 0.97)),       # near-white (oldest, 3360-4000)
+            (1.00, (0.99, 0.985, 0.99))])
     else:
         return spec                      # a plain matplotlib name (handles its own _r)
     return cm.reversed() if rev else cm
@@ -350,12 +370,21 @@ def _draw_field(ax, field, extent, tr):
     """Fill a scalar field over the map. A 'grid2d' field (LON,LAT,V 2-D) is drawn
     on its native grid like the MATLAB pcolor; otherwise node lon/lat/val are RBF-
     gridded and masked to WA land + within max_dist of a node."""
-    cmap = _resolve_cmap(field.get('cmap', 'Spectral'))
-    nc = int(field.get('ncolors', 0) or 0)
-    if nc > 0:                                        # discrete colour levels (like MATLAB cmap(N))
-        import matplotlib
-        cm = matplotlib.colormaps[cmap] if isinstance(cmap, str) else cmap
-        cmap = cm.resampled(nc)
+    import matplotlib
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+    _blevels = field.get('levels')               # explicit (possibly non-uniform) bin edges
+    _bcolors = field.get('colors')               # one colour per bin (len = len(levels)-1)
+    norm = None
+    if _blevels is not None and _bcolors is not None:   # discrete scheme (e.g. Smithies TDM2 bins)
+        cmap = ListedColormap(_bcolors)
+        cmap.set_under(_bcolors[0]); cmap.set_over(_bcolors[-1])
+        norm = BoundaryNorm(_blevels, cmap.N); nc = 0
+    else:
+        cmap = _resolve_cmap(field.get('cmap', 'Spectral'))
+        nc = int(field.get('ncolors', 0) or 0)
+        if nc > 0:                                    # discrete colour levels (like MATLAB cmap(N))
+            cm = matplotlib.colormaps[cmap] if isinstance(cmap, str) else cmap
+            cmap = cm.resampled(nc)
     kw = {'transform': tr} if tr is not None else {}
     style = field.get('style', 'pcolor')
     if 'grid2d' in field:                         # native CCP grid (matches MATLAB)
@@ -364,19 +393,25 @@ def _draw_field(ax, field, extent, tr):
         good = np.isfinite(V)
         vmin, vmax = field['clim'] if field.get('clim') else \
             (np.nanpercentile(V[good], [2, 98]) if good.any() else (None, None))
-        if style == 'contourf' and vmin is not None:   # smooth filled contours (edge='none'), MATLAB-like
-            lv = np.linspace(vmin, vmax, (nc or 16) + 1)
-            im = ax.contourf(LON, LAT, Zm, levels=lv, cmap=cmap, extend='both',
-                             antialiased=True, alpha=field.get('alpha', 0.9), zorder=1.5, **kw)
+        if style == 'contourf' and (vmin is not None or _blevels is not None):
+            if _blevels is not None:                   # explicit bin edges (discrete scheme)
+                im = ax.contourf(LON, LAT, Zm, levels=_blevels, cmap=cmap, norm=norm,
+                                 extend='both', antialiased=True,
+                                 alpha=field.get('alpha', 0.9), zorder=1.5, **kw)
+            else:                                      # smooth filled contours (edge='none'), MATLAB-like
+                lv = np.linspace(vmin, vmax, (nc or 16) + 1)
+                im = ax.contourf(LON, LAT, Zm, levels=lv, cmap=cmap, extend='both',
+                                 antialiased=True, alpha=field.get('alpha', 0.9), zorder=1.5, **kw)
             try:                                       # hide thin lines between bands
                 im.set_edgecolor('face')
             except Exception:
                 for c in getattr(im, 'collections', []):
                     c.set_edgecolor('face')
         else:
-            im = ax.pcolormesh(LON, LAT, Zm, cmap=cmap, vmin=vmin, vmax=vmax,
+            _pk = dict(norm=norm) if norm is not None else dict(vmin=vmin, vmax=vmax)
+            im = ax.pcolormesh(LON, LAT, Zm, cmap=cmap,
                                shading=('gouraud' if style == 'smooth' else 'nearest'),
-                               zorder=1.5, alpha=field.get('alpha', 0.9), **kw)
+                               zorder=1.5, alpha=field.get('alpha', 0.9), **_pk, **kw)
         n = int(good.sum()); dmin, dmax = np.nanmin(V), np.nanmax(V)
     else:                                          # scattered nodes -> RBF grid
         from plot_moho_map import interp_field, wa_mask
@@ -401,7 +436,10 @@ def _draw_field(ax, field, extent, tr):
     cb = ax.figure.colorbar(im, ax=ax, shrink=0.55, pad=0.02, extend='both')
     cb.set_label(field.get('label', ''), fontsize=10, fontweight='bold')
     cb.ax.tick_params(labelsize=8)
-    if vmin is not None:                           # snap colorbar ticks to round numbers
+    if _blevels is not None:                       # discrete scheme: tick at every bin edge
+        cb.set_ticks(_blevels)
+        cb.set_ticklabels([f'{int(t)}' for t in _blevels])
+    elif vmin is not None:                         # snap colorbar ticks to round numbers
         ticks, dec = _nice_ticks(vmin, vmax)
         if ticks:
             cb.set_ticks(ticks)
@@ -411,8 +449,63 @@ def _draw_field(ax, field, extent, tr):
     return im
 
 
+def _add_scalebar(ax, length_km=200, loc='lower right', color='k', lw=3.2, fontsize=11):
+    """Horizontal distance scale bar (length_km). The BAR LENGTH is taken from the projected
+    metre width of the GeoAxes, but the bar is drawn in AXES-FRACTION coords so it never
+    touches the data limits (the map frame / coastline position is unchanged). 'lower right'
+    sits just above the lower-right station legend box; 'lower left' tucks into the corner."""
+    if getattr(ax, 'projection', None) is None:         # plain axes: skip (no metric scale)
+        return
+    x0, x1 = ax.get_xlim()                              # projected metres after set_extent
+    frac = (float(length_km) * 1000.0) / float(x1 - x0)  # bar length as an axes-x fraction
+    if 'left' in loc:
+        xl = 0.04; xr = xl + frac; ty = 0.055
+    else:                                               # lower right, above the station legend
+        xr = 0.975; xl = xr - frac; ty = 0.185
+    cap = 0.014
+    pe = [__import__('matplotlib.patheffects', fromlist=['withStroke'])
+          .withStroke(linewidth=2.2, foreground='white')]
+    ax.plot([xl, xr], [ty, ty], transform=ax.transAxes, color=color, lw=lw,
+            solid_capstyle='butt', zorder=12, clip_on=False)
+    for xx in (xl, xr):                                 # end caps
+        ax.plot([xx, xx], [ty, ty + cap], transform=ax.transAxes, color=color,
+                lw=lw * 0.7, zorder=12, clip_on=False)
+    ax.text((xl + xr) / 2, ty + 1.5 * cap, f'{int(length_km)} km', transform=ax.transAxes,
+            ha='center', va='bottom', fontsize=fontsize, fontweight='bold', zorder=12,
+            path_effects=pe)
+
+
+def _draw_sections(ax, sections, polylines, lkw, xyc, tick_km,
+                   line_colour='k', label_colour='red'):
+    """Profile lines on the map: white halo + coloured line, start/end rings, distance
+    ticks + labels every tick_km, and the section label at the start."""
+    import matplotlib.patheffects as _pe
+    import plot_xsection as px            # shared geometry helpers
+    for (lat1, lon1, lat2, lon2, lab) in sections:
+        if polylines and lab in polylines:        # draw the true picked path, not a chord
+            plo, pla = polylines[lab]
+            plat, plon, dist = px._polyline_path(plo, pla)
+        else:
+            plat, plon, dist = px._great_circle_path(lat1, lon1, lat2, lon2)
+        ax.plot(plon, plat, 'w-', lw=3.4, zorder=5, **lkw)   # white halo
+        ax.plot(plon, plat, '-', color=line_colour, lw=2.0, zorder=6, **lkw)
+        ax.plot(plon[0], plat[0], 'o', mfc='none', mec=line_colour, mew=0.9, ms=4, zorder=7, **lkw)
+        ax.plot(plon[-1], plat[-1], 'o', mfc='none', mec=line_colour, mew=0.9, ms=4, zorder=7, **lkw)
+        for dkm in np.arange(0, dist[-1], tick_km):
+            j = np.argmin(np.abs(dist - dkm))
+            ax.plot(plon[j], plat[j], '|', color=line_colour, ms=7, mew=1.2, zorder=7, **lkw)
+            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=5.5, xycoords=xyc,
+                        ha='center', va='bottom', zorder=8,
+                        xytext=(0, 3), textcoords='offset points',
+                        bbox=dict(fc='w', ec='none', alpha=0.6, pad=0.3))
+        ax.annotate(lab, (plon[0], plat[0]), fontsize=9, fontweight='bold', xycoords=xyc,
+                    color=label_colour, zorder=8, xytext=(5, 5), textcoords='offset points',
+                    path_effects=[_pe.withStroke(linewidth=1.6, foreground='white')])
+
+
 def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None,
              litho_npz=None, tick_km=100, stations=None, style='map2022',
+             extra_sections=None, extra_polylines=None, extra_colour='blue',
              footprint=None, footprint_veil=0.5, tect_npz=None, bnd_npz=None,
              projection='albers', legend='upper left', labels='major',
              label_scale=1.4, polylines=None, overlays=None, geo=None,
@@ -420,7 +513,7 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
              box=None, box_color=(0, 0, 0), box_lw=2.2,
              station_marker='^', station_color='k', station_open=False,
              out_name='xsection_index_map', legend_ages=False, bnd_loc='lower left',
-             field=None, yilgarn=None, cut_line=None, deposit_args=None):
+             field=None, yilgarn=None, cut_line=None, deposit_args=None, scalebar_km=None):
     """Profile lines / station map on the WA tectonic basemap, distance ticks + labels
     every tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -472,7 +565,8 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
         proj = (ccrs.AlbersEqualArea(central_longitude=121.0, standard_parallels=(-17.5, -31.5))
                 if projection == 'albers' else ccrs.PlateCarree())
         ax = fig.add_axes([0.06, 0.05, 0.88, 0.90], projection=proj)
-        ax.set_facecolor('white' if style == 'map2022' else 'lightgrey')
+        _tdm2 = field is not None and field.get('tectonic_outline')   # TDM2: grey no-data land
+        ax.set_facecolor(('#e6e6e6' if _tdm2 else 'white') if style == 'map2022' else 'lightgrey')
         ax.coastlines('50m', linewidth=0.8, color='k', zorder=10)
         tr = ccrs.PlateCarree()
         _geo = True
@@ -496,8 +590,12 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
             from wa_basemap import add_map2022_units, add_crustal_boundaries
             if field is not None:          # Moho/Vsv/Xi fill: no colour units, grey terrane outlines
                 _draw_field(ax, field, (ext_lo0, ext_lo1, ext_la0, ext_la1), tr)
-                add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=4.0,
-                                  fill=False, edgecolor='0.55', lw=0.3, verbose=False)
+                if field.get('tectonic_outline'):   # TDM2: transparent units, THICK BLACK unit lines
+                    add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=4.0,
+                                      fill=False, edgecolor='k', lw=1.1, verbose=False)
+                else:
+                    add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=4.0,
+                                      fill=False, edgecolor='0.55', lw=0.3, verbose=False)
             else:
                 add_map2022_units(ax, tect_npz, transform=tr, clip_box=cb, zorder=0)
             if labels and labels != 'none':
@@ -510,12 +608,13 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
                                         clip_box=cb, color='k', exclude_class=excl,
                                         other_scale=oscale, full_names=('KIMBERLEY',))
                 print(f"  unit labels: {nl} ({labels})")
-            try:                           # major crustal boundaries: thin black
-                add_crustal_boundaries(ax, bnd_npz, transform=tr, clip_box=cb, zorder=4.2,
-                                       lw_litho=1.0, lw_crust=0.5, color='k',
-                                       alpha=(0.95 if field is not None else 0.85))
-            except Exception as e:
-                print(f"  (crustal boundaries unavailable: {e})")
+            if not (field is not None and field.get('tectonic_outline')):  # TDM2: skip the busy crustal lines
+                try:                       # major crustal boundaries: thin black
+                    add_crustal_boundaries(ax, bnd_npz, transform=tr, clip_box=cb, zorder=4.2,
+                                           lw_litho=1.0, lw_crust=0.5, color='k',
+                                           alpha=(0.95 if field is not None else 0.85))
+                except Exception as e:
+                    print(f"  (crustal boundaries unavailable: {e})")
         else:
             add_tectonic_background(ax, alpha=0.5, zorder=0, transform=tr, clip_box=cb)
         if yilgarn:                         # Yilgarn greenstone/rock-type fill + craton contours
@@ -595,28 +694,10 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(geo['bnd'].lines, colors='firebrick',
                                          linewidths=0.9, alpha=0.8, zorder=4, **lkw))
-    for i, (lat1, lon1, lat2, lon2, lab) in enumerate(sections):
-        if polylines and lab in polylines:        # draw the true picked path, not a chord
-            plo, pla = polylines[lab]
-            plat, plon, dist = px._polyline_path(plo, pla)
-        else:
-            plat, plon, dist = px._great_circle_path(lat1, lon1, lat2, lon2)
-        ax.plot(plon, plat, 'w-', lw=3.4, zorder=5, **lkw)   # white halo
-        ax.plot(plon, plat, 'k-', lw=2.0, zorder=6, **lkw)
-        ax.plot(plon[0], plat[0], 'o', mfc='none', mec='k', mew=0.9, ms=4, zorder=7, **lkw)
-        ax.plot(plon[-1], plat[-1], 'o', mfc='none', mec='k', mew=0.9, ms=4, zorder=7, **lkw)
-        for dkm in np.arange(0, dist[-1], tick_km):
-            j = np.argmin(np.abs(dist - dkm))
-            ax.plot(plon[j], plat[j], '|', color='k', ms=7, mew=1.2, zorder=7, **lkw)
-            ax.annotate(f'{int(dkm)}', (plon[j], plat[j]), fontsize=5.5, xycoords=xyc,
-                        ha='center', va='bottom', zorder=8,
-                        xytext=(0, 3), textcoords='offset points',
-                        bbox=dict(fc='w', ec='none', alpha=0.6, pad=0.3))
-        import matplotlib.patheffects as _pe
-        ax.annotate(lab, (plon[0], plat[0]), fontsize=9, fontweight='bold', xycoords=xyc,
-                    color='red', zorder=8, xytext=(5,5),
-                    textcoords='offset points',
-                    path_effects=[_pe.withStroke(linewidth=1.6, foreground='white')])
+    _draw_sections(ax, sections, polylines, lkw, xyc, tick_km, line_colour='k', label_colour='red')
+    if extra_sections:          # e.g. L1/L2 overlaid in blue with the same distance ticks
+        _draw_sections(ax, extra_sections, extra_polylines, lkw, xyc, tick_km,
+                       line_colour=extra_colour, label_colour=extra_colour)
 
     # Grey ocean mask + coastline on top (like the depth-slice panels)
     if _geo:
@@ -647,6 +728,12 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
     else:
         ax.set_xlim(ext_lo0, ext_lo1)
         ax.set_ylim(ext_la0, ext_la1); ax.set_aspect('equal')
+    if scalebar_km:                               # horizontal km scale bar (like the GSWA map)
+        try:
+            _add_scalebar(ax, length_km=scalebar_km, loc='lower right')
+            print(f"  scale bar: {int(scalebar_km)} km (above the station legend)")
+        except Exception as e:
+            print(f"  (scale bar unavailable: {e})")
     ax.set_xlabel('Longitude'); ax.set_ylabel('Latitude')
     if box is not None:                       # coverage box of a smaller map (lon0 lon1 lat0 lat1)
         bl0, bl1, bb0, bb1 = box
@@ -662,13 +749,16 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
         ax.set_title(field.get('label', 'Field') + (f' ({n_sta} stations)' if n_sta else ''),
                      fontsize=12, fontweight='bold')
     else:
-        ax.set_title(f'Cross-section locations ({len(sections)} lines, ticks every {tick_km:g} km'
+        _nln = len(sections) + (len(extra_sections) if extra_sections else 0)
+        ax.set_title(f'Cross-section locations ({_nln} lines, ticks every {tick_km:g} km'
                      + (f'; {n_sta} stations)' if n_sta else ')'),
                      fontsize=11)
     if _tect and style == 'map2022':
-        from wa_basemap import boundaries_legend   # credit now in the map-legend title
-        boundaries_legend(ax, loc=bnd_loc, fontsize=7, lw_litho=1.1, lw_crust=0.5)
-        if legend and legend != 'none':
+        _tdm2_field = field is not None and field.get('tectonic_outline')
+        if not _tdm2_field:                            # TDM2 drops the crustal lines + their legend
+            from wa_basemap import boundaries_legend   # credit now in the map-legend title
+            boundaries_legend(ax, loc=bnd_loc, fontsize=7, lw_litho=1.1, lw_crust=0.5)
+        if legend and legend != 'none' and not _tdm2_field:   # TDM2: colorbar IS the age key
             from wa_basemap import add_map2022_legend
             if legend_ages:        # drop rock-type headers + centre sub-eras; keep age numbers; big bold eras
                 add_map2022_legend(ax, loc=legend, rock_labels=False, sub_labels=False,
@@ -738,6 +828,12 @@ def main():
                     "sections/stations).")
     ap.add_argument('--sections', default=None, help='sections.txt (lat1 lon1 lat2 lon2 label)')
     ap.add_argument('--load-polylines', default=None, help='polylines npz (draw true picked paths)')
+    ap.add_argument('--extra-sections', default=None,
+                    help='a 2nd sections.txt (e.g. L1/L2) overlaid in --extra-colour with the '
+                         'same distance ticks')
+    ap.add_argument('--extra-polylines', default=None,
+                    help='polylines npz for --extra-sections (true picked paths)')
+    ap.add_argument('--extra-colour', default='blue', help='colour for --extra-sections (default blue)')
     ap.add_argument('--extent', nargs=4, type=float, default=None,
                     metavar=('LON0', 'LON1', 'LAT0', 'LAT1'), help='map frame')
     ap.add_argument('--stations', default=None, help='WA Array stations file (code lat lon)')
@@ -800,6 +896,17 @@ def main():
     ap.add_argument('--avg-top', type=float, default=None,
                     help='shorthand: average from this depth to the Moho (= --avg-window TOP moho)')
     ap.add_argument('--avg-field', default=None, help='override npz field name (default Vsv / Xi)')
+    # ---- GSWA Sm-Nd two-stage model age TDM2 (scattered -> kriged) ----
+    ap.add_argument('--smnd-tdm2', default=None,
+                    help='Sm-Nd model-age npz (lon/lat/tdm2 from extract/make_smnd.py): kriged '
+                         'TDM2 (Ma) field, transparent tectonic units with thick black outlines, '
+                         'colorbar replaces the rock/age legend box')
+    ap.add_argument('--smnd-max-km', type=float, default=60.0,
+                    help='blank TDM2 cells farther than this many km from any Sm-Nd sample '
+                         '(default 60; tightens sparse-coverage areas)')
+    ap.add_argument('--tdm2-bins', choices=['smithies', 'official'], default='smithies',
+                    help="TDM2 colour bins: 'smithies' (default) = Smithies 2022 bins & colours "
+                         "extended to younger ages; 'official' = the GSWA SYM_TDM2 bins in the npz")
     # ---- H-K station Vp/Vs (scattered -> kriged) ----
     ap.add_argument('--hk', default=None, help='HK summary table (per-station); kriged Vp/Vs map')
     ap.add_argument('--hk-field', default='k_new',
@@ -863,9 +970,17 @@ def main():
     ap.add_argument('--cut-poly', default=None, metavar='FILE',
                     help='lon/lat polyline (NW->SE) defining a NE cut boundary; keep only '
                          'stations (and colour) on its SW side. e.g. data/masks/wa_array_cut.txt')
+    ap.add_argument('--station-cut-poly', default=None, metavar='FILE',
+                    help='like --cut-poly but clips STATIONS ONLY (not the field): keep only '
+                         'stations SW of this line. Use with --smnd-tdm2 to drop the Pilbara/NE '
+                         'stations off the array footprint while keeping the full-state field. '
+                         'e.g. data/masks/wa_array_cut.txt')
     ap.add_argument('--draw-cut', action='store_true',
                     help='draw the --cut-poly line on the map (magenta dashed) to see which '
                          'stations fall inside vs outside it')
+    ap.add_argument('--scale-bar', dest='scale_bar', type=float, default=None, metavar='KM',
+                    help='draw a horizontal distance scale bar of KM kilometres (lower left), '
+                         'like the GSWA/Smithies map, e.g. --scale-bar 200')
     ap.add_argument('--yilgarn', action='store_true',
                     help='overlay the Yilgarn craton: fill rock types (--yilgarn-fill) and draw '
                          'the craton outline (red) + terrane/domain boundaries (grey)')
@@ -920,14 +1035,28 @@ def main():
         if args.draw_cut:
             cut_line = _cpts
         print(f"  cut-poly: keeping SW side of {cp}")
+    sta_cut_path = None                            # station-only cut (field stays full)
+    if args.station_cut_poly:
+        scp = _repo_rel(args.station_cut_poly)
+        if not os.path.isfile(scp):
+            ap.error(f"--station-cut-poly file not found: {args.station_cut_poly} (cwd={os.getcwd()})")
+        sta_cut_path = _keep_poly(_read_cut_poly(scp))
+        if args.draw_cut and cut_line is None:
+            cut_line = _read_cut_poly(scp)
+        print(f"  station-cut-poly: keeping stations SW of {scp}")
 
     sections = px._load_sections(args.sections) if args.sections else []
-    poly = None
-    if args.load_polylines:
-        p = np.load(args.load_polylines, allow_pickle=True)
-        poly = {str(p['short'][i]): (np.asarray(p['lon'][i], float),
+
+    def _load_poly(path):
+        if not path:
+            return None
+        p = np.load(path, allow_pickle=True)
+        return {str(p['short'][i]): (np.asarray(p['lon'][i], float),
                                      np.asarray(p['lat'][i], float))
                 for i in range(len(p['short']))}
+    poly = _load_poly(args.load_polylines)
+    extra_sections = px._load_sections(args.extra_sections) if args.extra_sections else None
+    extra_poly = _load_poly(args.extra_polylines)
     sta = None
     if not args.no_stations:                 # default to config.STATIONS, as --index-map does
         try:
@@ -970,12 +1099,77 @@ def main():
         else:
             print(f"  phase4: file not found ({args.phase4}) - skipped")
     field = None
+    if args.smnd_tdm2 and args.out_name == 'xsection_index_map':
+        args.out_name = 'tdm2_age_map'                # distinct default name for the TDM2 map
     clim = tuple(args.field_clim) if args.field_clim else None
     _cm = lambda dflt: args.field_cmap if args.field_cmap != 'DEFAULT' else dflt
     _nc = lambda dflt: args.field_ncolors if args.field_ncolors > 0 else dflt
     _HK_LABELS = {'k_new': 'Vp/Vs', 'k_ref': 'Vp/Vs (ref)', 'h_new': 'H (km)',
                   'vp': 'Vp (km/s)', 'vs': 'Vs (km/s)'}
-    if args.hk:                                     # per-station H-K Vp/Vs, kriged
+    if args.smnd_tdm2:                              # GSWA Sm-Nd two-stage model age TDM2 (Ma), kriged
+        _z = np.load(args.smnd_tdm2, allow_pickle=True)
+        slon = np.asarray(_z['lon'], float); slat = np.asarray(_z['lat'], float)
+        sval = np.asarray(_z['tdm2'], float)
+        if cut_path is not None:                              # drop samples NE of the cut line
+            k = cut_path.contains_points(np.column_stack([slon, slat]))
+            slon, slat, sval = slon[k], slat[k], sval[k]
+        print(f"  TDM2: {len(slon)} Sm-Nd samples, {np.nanmin(sval):.0f}-{np.nanmax(sval):.0f} Ma")
+        lo0, lo1, la0, la1 = tuple(args.extent) if args.extent else (112, 129.6, -36, -13.2)
+        dg = args.field_dgrid if args.field_dgrid != 0.05 else 0.1
+        glon = np.arange(lo0, lo1 + dg, dg); glat = np.arange(la0, la1 + dg, dg)
+        LON2, LAT2 = np.meshgrid(glon, glat)
+        _interp = args.field_interp if args.field_interp != 'rbf' else 'kriging'   # krige by default
+        V = _krige_points(slon, slat, sval, LON2.ravel(), LAT2.ravel(),
+                          _interp).reshape(LON2.shape)
+        try:                                                  # mask to WA land
+            from plot_moho_map import wa_mask
+            m = wa_mask(glon, glat)
+            if m is not None:
+                V = np.where(m, V, np.nan)
+        except Exception as e:
+            print(f"  (WA land mask unavailable: {e})")
+        # blank cells farther than --smnd-max-km from any sample (km-accurate; sparse coverage)
+        from scipy.spatial import cKDTree
+        lat0 = float(np.nanmean(slat))
+        kx = 111.320 * np.cos(np.radians(lat0)); ky = 110.574   # deg -> km (local)
+        dd, _ = cKDTree(np.column_stack([slon * kx, slat * ky])).query(
+            np.column_stack([LON2.ravel() * kx, LAT2.ravel() * ky]))
+        far = (dd > args.smnd_max_km).reshape(V.shape)
+        V[far] = np.nan                                       # blank far from any sample
+        V = _nan_smooth(V, 1.0)                               # light smoothing for clean contourf
+        V[far] = np.nan                                       # keep footprint after smoothing
+        print(f"  TDM2 kriged ({_interp}, dgrid {dg}, snap {args.smnd_max_km:g} km): "
+              f"{int(np.isfinite(V).sum())} cells")
+        # Colour bins. 'smithies' (default): the Smithies (2022) paper bins & colours,
+        # EXTENDED to younger ages (extra bins 1250-2500 in deep green -> teal -> cyan).
+        # 'official': the GSWA classified SYM_TDM2 bins carried in the npz, coloured from
+        # the 'tdm2age' ramp sampled at the bin centres.
+        if args.tdm2_bins == 'official' and 'bins' in _z.files and np.size(_z['bins']):
+            _lv = np.asarray(_z['bins'], float).tolist()
+            _ramp = _resolve_cmap('tdm2age'); _nb = len(_lv) - 1
+            _col = [tuple(_ramp((i + 0.5) / _nb)[:3]) for i in range(_nb)]
+        else:                                            # Smithies bins, extended younger
+            _lv = [1250, 1600, 1900, 2200, 2500, 2800, 2900, 2980, 3050,
+                   3120, 3190, 3260, 3350, 3505, 4000]
+            _col = [(0.250, 0.730, 0.760), (0.220, 0.620, 0.560),      # <2500 extended:
+                    (0.270, 0.590, 0.420), (0.340, 0.570, 0.340),      # cyan->teal->green->deep green
+                    (0.439, 0.596, 0.349), (0.655, 0.753, 0.467),      # Smithies 2500-2900
+                    (0.875, 0.890, 0.580), (0.945, 0.890, 0.596),      # 2900-3050
+                    (0.945, 0.835, 0.545), (0.898, 0.733, 0.510),      # 3050-3190
+                    (0.816, 0.616, 0.502), (0.796, 0.580, 0.545),      # 3190-3350
+                    (0.847, 0.667, 0.671), (0.955, 0.935, 0.955)]      # 3350-4000 (mauve->near-white)
+        print(f"  TDM2 bins (Ma, {args.tdm2_bins}): {[int(x) for x in _lv]}")
+        if args.field_cmap != 'DEFAULT':                 # user override -> continuous ramp
+            field = dict(grid2d=(LON2, LAT2, V), label='TDM2 model age (Ma)',
+                         cmap=_cm('tdm2'), clim=clim, ncolors=_nc(8),
+                         alpha=args.field_alpha, style=(args.field_style or 'contourf'),
+                         tectonic_outline=True)
+        else:                                            # default: official classified bins
+            field = dict(grid2d=(LON2, LAT2, V), label='TDM2 model age (Ma)',
+                         levels=_lv, colors=_col, alpha=args.field_alpha,
+                         style=(args.field_style or 'contourf'),
+                         tectonic_outline=True)           # transparent units, thick black lines
+    elif args.hk:                                   # per-station H-K Vp/Vs, kriged
         hlon, hlat, hval = _read_hk(args.hk, args.hk_field)
         lbl = _HK_LABELS.get(args.hk_field.lower(), args.hk_field)
         if cut_path is not None:                              # drop stations NE of the cut line
@@ -1185,8 +1379,11 @@ def main():
                       & (lat >= min(la0, la1)) & (lat <= max(la0, la1)))
         if cut_path is not None:                   # keep only the SW side of the cut line
             keep &= cut_path.contains_points(np.column_stack([lon, lat]))
+        if sta_cut_path is not None:               # station-only cut (field not affected)
+            keep &= sta_cut_path.contains_points(np.column_stack([lon, lat]))
         return keep
-    if args.station_south_of is not None or args.station_exclude_box or cut_path is not None:
+    if (args.station_south_of is not None or args.station_exclude_box
+            or cut_path is not None or sta_cut_path is not None):
         if sta is not None:
             keep = _station_keep(sta[0], sta[1])
             sta = (np.asarray(sta[0])[keep], np.asarray(sta[1])[keep]) + tuple(sta[2:])
@@ -1201,8 +1398,9 @@ def main():
             print(f"  '{ov[5]}' kept after clip: {int(keep.sum())}")
         overlays = cov
 
-    if not sections and sta is None and not overlays and args.extent is None:
-        ap.error("give something to draw: --sections, --stations, --map-stations, or --extent")
+    if not sections and not extra_sections and sta is None and not overlays and args.extent is None:
+        ap.error("give something to draw: --sections, --extra-sections, --stations, "
+                 "--map-stations, or --extent")
 
     plot_map(sections, args.out_dir, d=None,
              extent=tuple(args.extent) if args.extent else None,
@@ -1210,6 +1408,8 @@ def main():
              litho_npz=(None if args.index_style == 'plain' else
                         px._resolve_npz('LITHOLOGY_NPZ', 'wa_lithology.npz', args.litho_npz)),
              tick_km=args.index_tick, stations=sta, style=args.index_style,
+             extra_sections=extra_sections, extra_polylines=extra_poly,
+             extra_colour=args.extra_colour,
              footprint=fp, footprint_veil=args.footprint_veil,
              tect_npz=px._resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz),
              bnd_npz=px._resolve_npz('BOUNDARIES_NPZ', 'wa_crustal_boundaries.npz', args.bnd_npz),
@@ -1222,7 +1422,8 @@ def main():
              station_open=args.station_open, out_name=args.out_name,
              legend_ages=args.legend_ages, bnd_loc=args.bnd_loc, field=field,
              yilgarn=yilgarn, cut_line=cut_line,
-             deposit_args=(args if _have_deposits else None))
+             deposit_args=(args if _have_deposits else None),
+             scalebar_km=args.scale_bar)
 
 
 if __name__ == '__main__':
