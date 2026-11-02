@@ -1,8 +1,10 @@
-# WA Array focus-area model maps — cheatsheet
+# WA Array focus-area maps & cross-sections — cheatsheet
 
-Smooth (contourf) model maps for the **WA Array focus area**, all sharing one
-footprint, one cut boundary, and the red Yilgarn craton contour. Built with
-`plotting/plot_wa_map.py` on the GSWA 2022 tectonic basemap. Run from the repo root.
+Model **maps** (`plotting/plot_wa_map.py`) and **cross-sections**
+(`plotting/plot_xsection.py`) for the **WA Array focus area**. Maps share one
+footprint, one cut boundary, and the red Yilgarn craton contour, on the GSWA 2022
+tectonic basemap. Cross-sections carry the AusMoho + CCP Moho overlays and an optional
+CCP RF panel. Run from the repo root. (Cross-sections: see "Cross-sections" below.)
 
 ```bash
 source env_stage6.sh          # sets $WGP, $ST, $FIG, ...
@@ -68,8 +70,192 @@ python3 plotting/plot_wa_map.py --stations $ST/stations.phases.1.2.3.txt $EXT $L
 Deposits (`--deposits gold,copper,lithium,nickel`) are drawn by `plotting/deposits.py`
 (log-area sizing) and listed in the lower-right "Stations & deposits" legend.
 
+### Line-group location map (one set of lines + greenstone + gold)
+
+A map showing just one group of cross-section lines (with 100 km distance marks) over
+greenstone + gold + the red craton — e.g. one per orientation (NS / WE / basin+AFO+L):
+
+```bash
+# build a one-group section list, then the map
+gsec=data/sections/NS.txt; : > "$gsec"
+for L in NS1 NS2 NS3 NS4 NS5 NS6 NS120; do awk -v l="$L" '$NF==l' "$ALLSEC" >> "$gsec"; done
+python3 plotting/plot_wa_map.py $EXT --labels major --legend none \
+    --sections "$gsec" --tick 100 --no-stations \
+    --yilgarn --yilgarn-fill greenstone --yilgarn-bounds craton \
+    --deposits gold --name NS_map --out-dir figures
+```
+
+`$ALLSEC` = all section lists concatenated (`cat "$XSW" "$CCPSEC" data/sections/new_xsections.txt
+| grep -v '^#' | awk 'NF>=5' > $ALLSEC`). To bundle a group's profiles + its map into one tar
+per group, loop this with a `make_bundle` helper (grab each `xsection.<label>[.gold-gs].png`,
+whichever tag exists). Line groups on d204403: NS = `NS1..NS6 NS120` (+ `116.5E 117.5E`);
+WE = `WE1..WE5` (EW = `EW1..EW8`); SENW = `SENW1..SENW3 L2_SENW`; basin = `WEST`; AFO = `AF`;
+L-lines = `L1_SN_117E L2_SENW`.
+
+### Sm-Nd model-age map (TDM2)
+
+GSWA two-stage depleted-mantle model age **TDM2 (Ma)** kriged into a map field; the
+tectonic units go **transparent with thick black outlines**, the busy crustal-boundary
+lines (and their legend) are dropped, and the colorbar replaces the rock/age legend box
+(so the colourbar *is* the age key).
+
+```bash
+# one-off: classified shapefile -> npz (pure-Python reader, numpy only). Per data drop.
+python3 extract/make_smnd.py \
+    --shp <...>/GEOCHRON_Samarium_Neodymium_GDA2020_SHP/.../WA_isotope_neodymium \
+    --out data/geology/wa_smnd_tdm2.npz   # 1506 felsic samples, TDM2 1250-3973 Ma
+
+# the map + stations + red craton contour. Default colours = Smithies bins (see below).
+python3 plotting/plot_wa_map.py $EXT $LBL $YC \
+    --smnd-tdm2 data/geology/wa_smnd_tdm2.npz --smnd-max-km 60 \
+    --stations $ST/stations.phases.1.2.3.txt \
+    --station-cut-poly data/masks/wa_array_cut.txt \
+    --scale-bar 200 \
+    --out-dir figures                            # -> tdm2_age_map_w_station.png (+ .pdf)
+```
+
+- **Scale bar:** `--scale-bar 200` draws a 200 km horizontal bar just above the lower-right
+  Stations legend, like the GSWA/Smithies map. Length is true distance from the Albers
+  projected width, but the bar is drawn in axes coords so it never shifts the map frame/coastline.
+
+- **Drop off-footprint stations:** `--station-cut-poly data/masks/wa_array_cut.txt` keeps only
+  stations SW of the WA Array cut line (drops the Pilbara/Capricorn/Paterson cluster north &
+  east of ~Hamersley). Unlike `--cut-poly`, it clips **stations only** — the field stays full-state.
+
+- **Red craton contour:** add `$YC` (`--yilgarn --yilgarn-fill none --yilgarn-bounds craton`),
+  same as the model maps — draws the red Yilgarn/Pilbara outline over the field (zorder 4.6).
+- **No-data land** (WA land with no Sm-Nd sample within `--smnd-max-km`) is filled light grey
+  (#e6e6e6) so it reads as "no data" rather than blank page; the sea stays white.
+
+- **Felsic only:** `make_smnd.py` keeps only felsic igneous rocks by default (SYM_TDM2 is a
+  numeric bin, not "Non-felsic Igneous Rocks") — 1506 of 2390 — as in the GSWA/Smithies
+  model-age map; `--all-rocks` keeps everything. The official bin edges are embedded in the npz.
+- Interp: kriging by default (needs `pykrige`; falls back to bounded-linear if absent),
+  `--field-interp rbf|cubic|linear` to switch. `--field-dgrid 0.1` grid step.
+- **Sparse coverage:** `--smnd-max-km 60` blanks cells >60 km (km-accurate) from any
+  Sm-Nd sample, so the field only shows where there's real data — raise/lower to taste.
+- **Colours (`--tdm2-bins`):** default `smithies` = the Smithies (2022) paper bins & colours
+  (2500/2800/2900/2980/3050/3120/3190/3260/3350/3505/4000 Ma: green → gold → tan → rose →
+  near-white oldest) **extended to younger ages** with four extra bins (1250/1600/1900/2200/2500)
+  in deep green → teal → cyan. The fine old-end steps give strong Yilgarn contrast. `official` =
+  the GSWA classified SYM_TDM2 bins carried in the npz, coloured from the `tdm2age` ramp. Colorbar
+  ticks sit on the bin edges. `--field-cmap NAME` switches to a continuous ramp (`tdm2`, `tdm2age`,
+  any matplotlib name) instead of discrete bins.
+- `--field-clim LO HI` (continuous mode only) pins the range; `--field-style smooth` = no bands.
+- `--smnd-tdm2` auto-names the file `tdm2_age_map`; stations add the `_w_station` suffix.
+- Add `--extra-sections …` to overlay L1/L2, or drop `--stations` for a clean field map.
+
+=======================================================================================
+## Cross-sections (`plotting/plot_xsection.py`)
+
+Per-section panels (Viso/Vsv, dViso, ξ, dlnξ, Vp/Vs, CCP RF, uncertainty) along the
+picked transects, with the AusMoho (dashed black + grey veil) and the CCP refined Moho
+(solid red). Saves `xsection.<label>[.ref-*].png` (+ `.pdf`) to `--out-dir`.
+
+```bash
+XI4=$A/v3c/Fvs.v3c.ccpmoho.iter.4.ZT.npz                  # xi (ZT) model: Viso + xi
+MOHO=/workspace/Others.data/AusMoho2023/AR23-moho-hmp.txt # regional AusMoho (dashed + veil)
+FINAL=$CCP/Moho.picked/moho_ccp_refined.final.mat         # CCP refined Moho pick (red line)
+PVH4=$(ls -1 $CCP/mat/*pvh.4*.Z.P.mat | head -1)          # CCP RF stack (NB .Z.P.mat, not *P.mat!)
+SEC=data/sections/new_xsections.txt                       # L1 (S->N, 117E), L2 (SE->NW)
+XOUT=$WGP/figures/xsections
+```
+
+```bash
+# (1) FULL landscape: Viso + xi + CCP RF (pvh.4), contourf 15 colours, AusMoho dashed+veil,
+#     CCP Moho red line, greenstone+gold track, and the grey craton bar above the domain bar.
+python3 plotting/plot_xsection.py --fvs $XI4 --load-sections $SEC \
+    --panels vsv,xi,ccp --ccp-pmat "$PVH4" --moho $MOHO --moho-ccp $FINAL \
+    --field-style contourf --ncolors 15 --vlim 3.0 4.6 --xi-lim 0.95 1.05 \
+    --geol-track --greenstone-npz data/geology/yilgarn_units.npz \
+    --deposit-dir data/deposits --gold-swath 50 --craton-line \
+    --ccp-neutral 0.10 --ccp-clim 0.08 --out-dir $XOUT
+#   --field-style smooth  -> continuous MATLAB-style shading (no bands)
+#   -> xsection.<label>.gold-gs.png (+ .pdf)
+
+# (2) VARIATIONS wrt the mean of all loaded sections: dlnVs + dlnXi + CCP RF (tagged .ref-allprof)
+python3 plotting/plot_xsection.py --fvs $XI4 --load-sections $SEC \
+    --panels dvsv,dxi,ccp --xi-panel dxi --var-ref allprofiles --ccp-pmat "$PVH4" \
+    --moho $MOHO --moho-ccp $FINAL --field-style contourf --ncolors 15 \
+    --geol-track --greenstone-npz data/geology/yilgarn_units.npz \
+    --deposit-dir data/deposits --gold-swath 50 --craton-line \
+    --ccp-neutral 0.10 --ccp-clim 0.08 --out-dir $XOUT
+#   -> xsection.<label>.ref-allprof.gold-gs.png (+ .pdf)
+```
+
+### Tectonic-bar overlays (greenstone + gold + craton)
+
+- **`--geol-track`** adds a strip above the domain bar: green **greenstone fill** (where the
+  profile crosses greenstone, from `--greenstone-npz`) with **gold deposits** projected onto the
+  line within `--gold-swath` km (50) as log-area markers (`--gold-style markers`|`lines`).
+  Gold is read from `--deposit-dir`/gold_deposits.mat (struct `gold`: lon lat size) — the same
+  file as the maps — or from a `--gold-file` (`lon lat [endowment] [kind]`). Tags outputs `.gold-gs`.
+- **`--craton-line`** adds a **grey bar in the gap above the domain bar** spanning where the
+  profile is inside the Yilgarn/Pilbara craton (from `data/geology/yilgarn_craton_outline.txt`,
+  `--craton-outline` to override). No extra row — the Au/greenstone strip stays close.
+
+### Plot ALL the lines at once
+
+`plot_xsection` draws exactly the lines in `--load-sections`. The section lists live in
+three separate files, so to plot everything concatenate them into one (all straight
+great-circle lines — curved basin/albany-fraser come out as straight endpoints):
+
+```bash
+XSW=$FIG/xsections/sections.txt                                 # NS/EW surface-wave grid
+CCPSEC=$FIG/profiles/profiles.latlon.phases.1.2.3.sections.txt  # SENW, basin (WEST), albany-fraser (AF), CCP NS/WE
+ALL=data/sections/all_sections.txt
+cat "$XSW" "$CCPSEC" "$SEC" | grep -v '^#' | awk 'NF>=5' > "$ALL"   # drop comments/blank rows
+wc -l "$ALL"                                                        # how many lines
+
+python3 plotting/plot_xsection.py --fvs $XI4 --load-sections $ALL \
+    --panels vsv,xi,ccp --ccp-pmat "$PVH4" --moho $MOHO --moho-ccp $FINAL \
+    --field-style contourf --ncolors 15 --vlim 3.0 4.6 --xi-lim 0.95 1.05 \
+    --ccp-neutral 0.10 --ccp-clim 0.08 --nproc 8 --out-dir $XOUT
+#   variations across the whole set: --panels dvsv,dxi,ccp --xi-panel dxi --var-ref allprofiles
+```
+
+NB: duplicate labels across files overwrite each other's PNG; `plot_xsection` does
+straight lines only, so basin/AF lose their picked curve (use `plot_ccp_profiles.py` for the
+true curved path).
+
+### Cross-section flags
+
+| Flag | What it does |
+|---|---|
+| `--load-sections FILE` | section list, one per line: `lat1 lon1 lat2 lon2 label`. |
+| `--panels vsv,dvsv,xi,dxi,vpvs,ccp,err` | which panels to draw: abs Viso/Vsv, dViso, abs ξ, dlnξ, Vp/Vs, CCP RF, uncertainty. |
+| `--xi-panel xi\|dxi\|both` | absolute ξ, dlnξ, or both — **needed for the `dxi` panel**. |
+| `--moho FILE` | regional Moho overlay — AusMoho grid text **or** a CCP `.mat`; dashed black + grey veil below. `--no-moho-mask` = line only. |
+| `--moho-ccp FINAL.mat` | CCP refined Moho pick as a solid **red** line (NaN outside the CCP footprint). |
+| `--ccp-pmat P.mat` | add the CCP RF amplitude panel (pvh.4); reads the CMP cube from `P.ofile1`. **Glob `*.Z.P.mat`, not `*P.mat` (that also matches the CMP file).** `--ccp-cmp`, `--ccp-amp-var` to override. |
+| `--ccp-clim C` / `--ccp-neutral F` / `--ccp-method` | CCP symmetric limit ±C (0.08); soft-white centre fraction F (0.10 ≈ one white band at odd `--ncolors`); interp linear/nearest/cubic. |
+| `--var-ref model\|yilgarn\|profile\|allprofiles` | baseline for dViso/dlnξ (per depth): whole-model mean / Yilgarn mean / each profile's own mean / **mean of all sections**. Tags outputs `.ref-profile` / `.ref-allprof`. |
+| `--field-style contourf\|smooth` | discrete `--ncolors` bands (default) or continuous MATLAB-style shading. |
+| `--ncolors N` | colour bands (15 ≈ 1.5× of 10; **odd** → a single white centre on diverging/CCP maps). |
+| `--vlim LO HI` / `--xi-lim LO HI` | absolute Viso/Vsv range (e.g. 3.0 4.6) / absolute ξ range (e.g. 0.95 1.05; default 0.92 1.08). |
+| `--clim-rel P` / `--clim-xi P` | ± percent range for dViso / dlnξ (default 6 / 5). |
+| `--vel auto\|model\|vsv_true` | panel-1 velocity: **Viso** (auto/model, default) or **true Vsv** (`vsv_true` converts the ξ/ZT model). |
+| `--ve N` | vertical exaggeration = **data aspect ratio** (default 3 → 3:1; `--ve 2` → 2:1; `--ve 1` = true scale). Also `--long-ratio N` to fix panel width:height instead. |
+| `--vs-smooth SIGMA` | gentle NaN-aware Gaussian smooth of the **Vs panel only** (SIGMA in grid cells; try 1–2; 0 off). ξ/CCP untouched. |
+| `--xi-cmap NAME` | ξ colormap: a general blue-red (`RdBu` **default**, or `coolwarm`/`bwr`/`seismic`), or `rwb` for the custom red-white-blue. |
+| `--xi-gap GAP` | ξ white-centre width for `rwb` only (default 0.12; lower = more gradual; 0 = smooth). Ignored for RdBu/others. |
+| `--geol-track` | greenstone-fill + gold-deposit track above the domain bar (tags `.gold-gs`). |
+| `--greenstone-npz F` | greenstone polygons (default `data/geology/yilgarn_units.npz`). |
+| `--deposit-dir D` / `--gold-file F` | gold from `D/gold_deposits.mat` (default repo `matlab/`; yours is `data/deposits`) or a `lon lat [endowment] [kind]` list. |
+| `--gold-swath KM` / `--gold-style markers\|lines` | projection halfwidth (50) / log-area circles or vertical ticks. |
+| `--craton-line` / `--craton-outline F` | grey craton bar above the domain bar / its outline (default `data/geology/yilgarn_craton_outline.txt`). |
+| `--fault 'LABEL:LON,LAT'` | mark a fault (e.g. Ida) with a **red down-arrow on the top strip** (same style as the boundary crossings, red + thick) at the profile point nearest LON,LAT, red label above. Repeatable; one lon/lat projects onto every profile that crosses it. |
+| `--stack FIELD` | stack one field across all sections, one page per orientation. |
+| `--nproc N` | plot sections in parallel. |
+
+Colormaps (match the maps): Viso/Vsv = `cmapx` rainbow (slow red → fast blue); ξ = **`RdBu`**
+general blue-red by default (red < 1 < blue, natural white centre; `--xi-cmap rwb` for the old
+tight-white custom map); Vp/Vs = `rgb`; CCP RF = soft red-white-blue (blue +, red −). Colorbar
+ticks snap to round values. CCP RF has no "variation" (it's an amplitude image), so dViso/dlnξ
+apply to the model fields only.
+
 ---------------------------------------------------------------------------------------
-## Key flags (this workflow)
+## Key flags (maps)
 
 | Flag | What it does |
 |---|---|
@@ -104,6 +290,9 @@ snap to round values automatically.
 - `data/geology/yilgarn_contours.mat` / `yilgarn_craton_outline.txt` — the craton outline for
   MATLAB (`[cx,cy]=wa_albers(Y.craton_lon,Y.craton_lat); plot(ax,cx,cy,'r-')`).
 - `data/masks/wa_array_cut.txt` — the agreed WA Array cut boundary (edit the lon/lat rows to nudge).
+- `data/geology/wa_smnd_tdm2.npz` — 1506 **felsic** GSWA Sm-Nd samples (lon/lat + TDM2 Ma,
+  classified SYM_TDM2, TECT_UNIT, official `bins`), from `extract/make_smnd.py` on the
+  classified GEOCHRON Sm-Nd shapefile. Feeds `--smnd-tdm2`. (`--all-rocks` → all 2390.)
 
 ## Notes / gotchas
 

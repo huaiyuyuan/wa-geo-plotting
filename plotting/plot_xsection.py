@@ -65,8 +65,144 @@ def _resolve_npz(cfg_name, fname, override=None):
     return None
 
 
+def _read_gold_file(path, kinds=('gold',)):
+    """Deposit list -> dict(lon, lat, size, ...). Columns 'lon lat [endowment] [kind]'
+    (whitespace or comma). Rows whose 4th column names a non-matching kind are dropped;
+    with no 4th column all rows are kept. 'size' is log-area-scaled from the endowment
+    (3rd column) if present, else uniform."""
+    import numpy as np
+    rows = []
+    with open(path) as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln or ln.startswith('#'):
+                continue
+            parts = ln.replace(',', ' ').split()
+            rows.append(parts)
+    lon, lat, endow, keep = [], [], [], []
+    kinds = tuple(k.lower() for k in kinds)
+    for p in rows:
+        if len(p) < 2:
+            continue
+        try:
+            lo, la = float(p[0]), float(p[1])
+        except ValueError:
+            continue
+        kind = p[3].lower() if len(p) >= 4 else (p[2].lower() if len(p) == 3 and not _isfloat(p[2]) else '')
+        if kind and kinds and kind not in kinds:
+            continue
+        lon.append(lo); lat.append(la)
+        endow.append(float(p[2]) if len(p) >= 3 and _isfloat(p[2]) else np.nan)
+    lon = np.array(lon); lat = np.array(lat); endow = np.array(endow)
+    size = _endow_to_size(endow)
+    print(f"  gold track: {len(lon)} deposits from {path}")
+    return dict(lon=lon, lat=lat, size=size, marker='o', facecolor=(1.0, 0.84, 0.0))
+
+
+def _isfloat(s):
+    try:
+        float(s); return True
+    except ValueError:
+        return False
+
+
+def _endow_to_size(endow, s_min=4.0, s_max=55.0, gamma=2.0):
+    """Marker area from endowment: log-scaled, s_min..s_max; uniform s_min where unknown."""
+    import numpy as np
+    e = np.asarray(endow, float)
+    ok = np.isfinite(e) & (e > 0)
+    s = np.full(e.shape, s_min, float)
+    if ok.sum() >= 2:
+        le = np.log10(e[ok])
+        t = (le - le.min()) / max(float(np.ptp(le)), 1e-9)
+        s[ok] = s_min + (s_max - s_min) * (t ** (1.0 / gamma))
+    return s
+
+
+def _deposit_points(args):
+    """Load gold deposit points for the --geol-track. Prefers --gold-file; else tries a
+    loader in deposits.py; returns None (greenstone-only band) if neither is available."""
+    kinds = ['gold']
+    if getattr(args, 'deposits', None):
+        kinds = [s.strip().lower() for s in args.deposits.split(',') if s.strip()] or ['gold']
+    if getattr(args, 'gold_file', None):
+        try:
+            d = _read_gold_file(args.gold_file, kinds)
+            d['style'] = getattr(args, 'gold_style', 'markers')
+            return d
+        except Exception as e:
+            print(f"  gold track: could not read --gold-file ({e}); greenstone only")
+            return None
+    # read the deposit .mat directly (same files as deposits.py / the maps):
+    #   <deposit-dir>/<kind>_deposits.mat, struct named <kind>, fields lon lat size
+    import numpy as np
+    from scipy.io import loadmat
+    ddir = getattr(args, 'deposit_dir', None)
+    if not ddir:                                   # default: repo matlab/ (where deposits.py looks)
+        ddir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'matlab')
+    _COLOR = {'gold': (1.00, 0.90, 0.00), 'copper': (0.85, 0.0, 0.0),
+              'lithium': (0.60, 0.20, 0.80), 'nickel': (0.20, 0.70, 0.20)}
+    _MARK = {'gold': 'o', 'copper': '^', 'lithium': 'h', 'nickel': 'h'}
+    lons, lats, szs = [], [], []
+    fc, mk = (1.0, 0.90, 0.0), 'o'
+    for k in kinds:
+        path = os.path.join(ddir, f'{k}_deposits.mat')
+        if not os.path.isfile(path):
+            print(f"  gold track: {path} not found"); continue
+        try:
+            g = loadmat(path, squeeze_me=True, struct_as_record=False)[k]
+            lons.append(np.asarray(g.lon, float).ravel())
+            lats.append(np.asarray(g.lat, float).ravel())
+            szs.append(np.asarray(g.size, float).ravel())
+            fc, mk = _COLOR.get(k, fc), _MARK.get(k, mk)
+        except Exception as e:
+            print(f"  gold track: could not read {path} ({e})")
+    if not lons:
+        print("  gold track: no deposit .mat loaded (set --deposit-dir or use --gold-file); "
+              "greenstone only")
+        return None
+    lon = np.concatenate(lons); lat = np.concatenate(lats); sz = np.concatenate(szs)
+    print(f"  gold track: {len(lon)} {'/'.join(kinds)} deposits from {ddir}")
+    return dict(lon=lon, lat=lat, size=_endow_to_size(sz), marker=mk, facecolor=fc,
+                style=getattr(args, 'gold_style', 'markers'))
+
+
+def _parse_faults(specs, default_half_km=40.0):
+    """--fault 'LABEL:LON,LAT[:HALF_KM]' -> list of (label, lon, lat, half_km). HALF_KM is
+    the arrow half-width in km (default 40). Returns None if no faults given."""
+    out = []
+    for s in (specs or []):
+        try:
+            parts = s.split(':')
+            label = parts[0].strip()
+            lon, lat = (float(x) for x in parts[1].split(','))
+            half = float(parts[2]) if len(parts) > 2 and parts[2].strip() else default_half_km
+            out.append((label, lon, lat, half))
+        except (ValueError, IndexError):
+            raise SystemExit(f"--fault: bad spec {s!r}; want 'LABEL:LON,LAT[:HALF_KM]' "
+                             "e.g. 'Ida Fault:121.3,-29.5' or 'Ida Fault:121.3,-29.5:60'")
+    return out or None
+
+
+def _parse_highlight(specs):
+    """--highlight-boundary 'NPZNAME:LABEL' -> [(npz_name, label), ...]. The crustal-boundary
+    crossing whose npz name == NPZNAME is drawn as the RED fault arrow labelled LABEL (default
+    = NPZNAME), located at the true per-profile crossing. e.g. 'Youanmi east:Ida Fault'."""
+    out = []
+    for s in (specs or []):
+        name, _, lab = s.partition(':')
+        name = name.strip()
+        if not name:
+            raise SystemExit(f"--highlight-boundary: bad spec {s!r}; want 'NPZNAME:LABEL' "
+                             "e.g. 'Youanmi east:Ida Fault'")
+        out.append((name, lab.strip() or name))
+    return out or None
+
+
 def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False,
-                  domain_colours='map2022'):
+                  domain_colours='map2022', greenstone_npz=None, deposits=None,
+                  dep_swath=50.0, craton_outline=None, faults=None,
+                  highlight_boundaries=None):
     import xsection_strips as xs
     want = {w.strip() for w in spec.split(',') if w.strip()}
     bad = want - _STRIP_ITEMS
@@ -89,6 +225,28 @@ def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False
             continue
         g[key] = loader(path)
         print(f"  strips: {item} <- {path}")
+    g['greenstone'] = None
+    g['deposits'] = deposits
+    g['dep_swath'] = dep_swath
+    g['faults'] = faults
+    g['highlight_boundaries'] = highlight_boundaries
+    g['craton'] = None
+    if craton_outline and os.path.isfile(craton_outline):
+        try:
+            g['craton'] = xs.craton_index_from_outline(craton_outline)
+            print(f"  strips: craton line <- {craton_outline}")
+        except Exception as e:
+            print(f"  craton line load failed: {e}")
+    elif craton_outline:
+        print(f"  craton outline not found ({craton_outline}) - line skipped")
+    if greenstone_npz and os.path.isfile(greenstone_npz):
+        try:
+            g['greenstone'] = xs.greenstone_index_from_npz(greenstone_npz)
+            print(f"  strips: greenstone <- {greenstone_npz}")
+        except Exception as e:
+            print(f"  greenstone track load failed: {e}")
+    elif greenstone_npz:
+        print(f"  greenstone npz not found ({greenstone_npz}) - band skipped")
     return g
 
 
@@ -97,6 +255,8 @@ def _strip_height_in(g):
     if g is None:
         return 0.0
     h = 0.17 * ((g['litho'] is not None) + (g['tect'] is not None))
+    if g.get('greenstone') is not None or g.get('deposits') is not None:
+        h += 0.20                                  # greenstone + gold track
     if g['bnd'] is not None:
         h += 0.28                                  # boundary down-arrows
         if g['names']:
@@ -111,7 +271,11 @@ def _add_geology(top_ax, axes, plon, plat, dist, names=None):
     res = xs.add_profile_strips(top_ax, axes, plon, plat, dist,
                                 litho=_GEO['litho'], tectonic=_GEO['tect'], boundaries=_GEO['bnd'],
                                 label_boundaries=_GEO['names'] if names is None else names,
-                                boundary_lines=_GEO.get('lines', False))
+                                boundary_lines=_GEO.get('lines', False),
+                                greenstone=_GEO.get('greenstone'), deposits=_GEO.get('deposits'),
+                                dep_swath_km=_GEO.get('dep_swath', 50.0),
+                                craton=_GEO.get('craton'), faults=_GEO.get('faults'),
+                                highlight_boundaries=_GEO.get('highlight_boundaries'))
     if res.crossings and names is not False:
         print('  boundary crossings: ' + ', '.join(
             f"{c.dist:.0f} km" + (f" ({'/'.join(c.names)})" if c.names else '')
@@ -281,8 +445,8 @@ def _sample_2d(Lon, Lat, data2d, prof_lon, prof_lat):
 
 # Colour convention (locked): absolute velocity = Spectral (warm = slow);
 # xi diverging around 1.0 and all differences = RdBu (red = low/slow).
-CMAP_ABS = 'Spectral'
-CMAP_VPVS = 'viridis'     # Vp/Vs absolute: continuous, as on the depth maps
+CMAP_ABS = 'cmapx'        # absolute Vsv: HY's MATLAB velocity map (matches the depth maps)
+CMAP_VPVS = 'rgb'         # Vp/Vs absolute: red (slow) -> green -> blue (fast), as on the Vp/Vs map
 
 # cmapx: HY's MATLAB absolute-velocity map (red -> orange -> yellow -> green -> cyan ->
 # blue, warm = slow), from /data/25/yuan/mfiles/mat/cmapx.mat. Anchors as printed in MATLAB.
@@ -325,12 +489,69 @@ DIVERGING = ('RdBu', 'RdYlBu')       # centred maps only; Spectral (absolute) st
 
 ABS_SKIP = None     # (LO, HI) part of Spectral left out of absolute maps, e.g. (0.36, 0.70); --abs-skip
 DIV_WHITE = 0.5     # neutral (white) band width in colour steps (0.5 = half a step); --div-white
+RWB_GAP = 0.12      # rwb (xi): skip the palest +-gap of red-white-blue so the white centre is tight
+                    # (fewer near-white bands); 0 = full-width white like a plain red-white-blue ramp
+
+
+def _nice_ticks(vmin, vmax, n=8):
+    """Round 'nice' tick values spanning [vmin,vmax] (steps of 1/2/5 x10^k), plus the
+    decimal count to label them cleanly. Same as plot_wa_map.py so bars match the maps."""
+    import math
+    span = float(vmax) - float(vmin)
+    if not np.isfinite(span) or span <= 0:
+        return None, 2
+    raw = span / n
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next((m * mag for m in (1, 2, 5, 10) if raw <= m * mag * (1 + 1e-9)), 10 * mag)
+    t0 = math.ceil(vmin / step - 1e-9) * step
+    ticks = []
+    t = t0
+    while t <= vmax + step * 1e-6:
+        ticks.append(round(t, 10)); t += step
+    dec = max(0, -int(math.floor(math.log10(step))))
+    return ticks, dec
+
+
+def _apply_nice_ticks(cb, vmin, vmax, n=8):
+    """Snap a colorbar to round tick values labelled to a consistent decimal count."""
+    ticks, dec = _nice_ticks(vmin, vmax, n)
+    if ticks:
+        cb.set_ticks(ticks)
+        cb.set_ticklabels([f'{t:.{dec}f}' for t in ticks])
+
+
+def _ncd(ncolors, smooth):
+    """Colour-level count for building a panel's colormap: a near-continuous 256 when
+    --field-style smooth (MATLAB-style continuous shading), else the discrete band count."""
+    return 256 if smooth else (ncolors or 16)
 
 
 def _cmap(name, n=32):
     """Diverging maps: n colour levels split evenly either side of a neutral (white) band of
     DIV_WHITE levels - fractional allowed (0.5 = one white step half as wide as a colour step;
-    1 = exactly one white step); DIV_GAP skips the palest +-gap of the base map."""
+    1 = exactly one white step); DIV_GAP skips the palest +-gap of the base map.
+    'cmapx'/'rwb'/'rgb' are the map colormaps (matches plot_wa_map.py) so absolute cross-section
+    panels read like the maps: Vsv=cmapx, xi=rwb (red<1<blue), Vp/Vs=rgb (slow red -> fast blue)."""
+    if name == 'cmapx':
+        return cmapx(n)
+    if name == 'rwb':
+        from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+        cm = LinearSegmentedColormap.from_list('rwb', [(0.78, 0, 0), (1, 1, 1), (0, 0, 0.78)], N=256)
+        if not (n and n > 0):
+            return cm
+        gap = RWB_GAP                       # drop the palest +-gap so the centre white is tight
+        side = n // 2
+        lo = cm(np.linspace(0.0, 0.5 - gap, side))
+        hi = cm(np.linspace(0.5 + gap, 1.0, side))
+        cols = np.vstack([lo, hi]) if n % 2 == 0 else np.vstack([lo, np.asarray(cm(0.5))[None, :], hi])
+        return ListedColormap(cols, name='rwb_gap')
+    if name == 'rgb':
+        from matplotlib.colors import LinearSegmentedColormap
+        anchors = [(0.63, 0.09, 0.16), (0.88, 0.40, 0.22), (0.62, 0.70, 0.35),
+                   (0.38, 0.70, 0.40), (0.26, 0.62, 0.62), (0.26, 0.42, 0.72),
+                   (0.30, 0.22, 0.60)]
+        cm = LinearSegmentedColormap.from_list('rgb', anchors, N=256)
+        return cm.resampled(n) if n and n > 0 else cm
     if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
@@ -391,26 +612,25 @@ def _xi_ref_label(mode):
 
 
 # ── Fvs loading (optionally converting Viso -> true Vsv) ──────────────────────
-XI_SQ = False                 # --xi-squared: DEPRECATED no-op (Fvs Xi already IS (Vsh/Vsv)^2)
-XI_LIM = (0.90, 1.10)
-XI_TITLE = 'xi = (Vsh/Vsv)^2 (blue = Vsh>Vsv)'
+XI_SQ = False                 # --xi-squared: show conventional xi = (Vsh/Vsv)^2 = Xi^2
+XI_LIM = (0.92, 1.08)
+XI_TITLE = 'xi = Vsh/Vsv (blue = Vsh>Vsv)'
 
 
 def _load_fvs(path, vel='model'):
     """Fvs npz as a dict. vel='vsv_true' replaces the 'Vsv' array of an xi (ZT) model
-    (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi)/3), where the
-    stored Xi IS xi = (Vsh/Vsv)^2 (verified in TransD xi2pctb.f). Vsv_err stays the
-    Viso posterior error (a close proxy)."""
+    (which holds Viso, Voigt / setup=3) by true Vsv = Viso/sqrt((2+Xi^2)/3), xi = Vsh/Vsv.
+    Vsv_err stays the Viso posterior error (a close proxy)."""
     raw = np.load(path, allow_pickle=True)
     d = {k: raw[k] for k in raw.files}
     if vel == 'vsv_true':
         if 'Xi' not in d or np.nanstd(d['Xi']) <= 1e-4:
             sys.exit(f"--vel vsv_true needs an xi (ZT) model; in {os.path.basename(path)} "
                      f"the 'Vsv' array already is Vsv")
-        d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi']) / 3.0)
+        d['Vsv'] = d['Vsv'] / np.sqrt((2.0 + d['Xi'] ** 2) / 3.0)
         d['_vel'] = 'vsv_true'
-    # The Fvs 'Xi' is already conventional xi = (Vsh/Vsv)^2, so it is plotted as-is.
-    # --xi-squared (XI_SQ) is a deprecated no-op kept only for backward compatibility.
+    if XI_SQ and 'Xi' in d:                  # after the Vsv conversion, which needs linear Xi
+        d['Xi'] = np.asarray(d['Xi'], float) ** 2
     return d
 
 
@@ -463,19 +683,89 @@ def _draw_moho(ax, dist, moho, zbot, mask_alpha=0.5, lw=1.1):
     ax.plot(dist, moho, 'k--', lw=lw, alpha=0.7, zorder=3)
 
 
+def _load_moho_interp(path, apply_mask=True):
+    """Return f(lat, lon) -> Moho depth (km) from either:
+      - an AusMoho-style gridded text file (lat lon depth, 11 header rows, regular grid)
+        -> RectBivariateSpline (continuous everywhere); or
+      - a CCP refined pick .mat (moho_refined: lat2/lon2/z_moho[/stn_mask], the most recent
+        CCP Moho) -> LinearNDInterpolator over its finite nodes, NaN outside the CCP
+        footprint so the overlaid line stops where the CCP data stop.
+    Same .mat convention as plot_wa_map.py so the sections match the maps."""
+    if str(path).lower().endswith('.mat'):
+        from scipy.io import loadmat
+        from scipy.interpolate import LinearNDInterpolator
+        m = loadmat(path, squeeze_me=True, struct_as_record=False)['moho_refined']
+        LON = np.asarray(m.lon2, float).ravel()
+        LAT = np.asarray(m.lat2, float).ravel()
+        Z = np.asarray(m.z_moho, float).ravel()
+        if apply_mask and hasattr(m, 'stn_mask'):
+            Z = np.where(np.asarray(m.stn_mask).astype(bool).ravel(), Z, np.nan)
+        ok = np.isfinite(LON) & np.isfinite(LAT) & np.isfinite(Z)
+        interp = LinearNDInterpolator(np.column_stack([LON[ok], LAT[ok]]), Z[ok])
+        return lambda la, lo: interp(lo, la)          # x=lon, y=lat; NaN outside the hull
+    from scipy.interpolate import RectBivariateSpline
+    md = np.loadtxt(path, skiprows=11)
+    mla = np.unique(md[:, 0]); mlo = np.unique(md[:, 1])
+    spl = RectBivariateSpline(mla, mlo, md[:, 2].reshape(len(mla), len(mlo)), kx=1, ky=1)
+    return lambda la, lo: spl(la, lo)
+
+
+def _set_ccp_stack(args):
+    """Load the CCP RF cube once (args.ccp_pmat) and park it, with its display settings,
+    on plot_section so every section (serial or worker) samples the same volume. Also
+    derives the pvh.N tag from the P.mat filename for the panel title."""
+    import re
+    plot_section._ccp = None
+    plot_section._ccp_clim = args.ccp_clim
+    plot_section._ccp_neutral = args.ccp_neutral
+    plot_section._ccp_method = args.ccp_method
+    plot_section._ccp_tag = ''
+    if not getattr(args, 'ccp_pmat', None):
+        return
+    try:
+        import plot_ccp_profiles as pcp
+        plot_section._ccp = pcp.load_ccp(args.ccp_pmat, ofile=args.ccp_cmp, amp_var=args.ccp_amp_var)
+        m = re.search(r'pvh\.?(\d+)', os.path.basename(args.ccp_pmat))
+        plot_section._ccp_tag = m.group(1) if m else ''
+        print(f'  CCP RF stack loaded: {args.ccp_pmat}'
+              + (f' (pvh.{plot_section._ccp_tag})' if plot_section._ccp_tag else ''))
+    except Exception as e:
+        print(f'  CCP RF stack load failed: {e}')
+        plot_section._ccp = None
+
+
 # ── Single cross-section ──────────────────────────────────────────────────────
+def _nan_gauss(a, sigma):
+    """Gaussian smooth of a 2-D array that ignores NaNs (normalised convolution). sigma in
+    grid cells; the original NaN mask is preserved so masked regions stay blank."""
+    from scipy.ndimage import gaussian_filter
+    a = np.asarray(a, float)
+    m = np.isfinite(a)
+    if not sigma or sigma <= 0 or not m.any():
+        return a
+    num = gaussian_filter(np.where(m, a, 0.0), sigma, mode='nearest')
+    den = gaussian_filter(m.astype(float), sigma, mode='nearest')
+    out = np.where(den > 1e-6, num / den, np.nan)
+    out[~m] = np.nan
+    return out
+
+
 def plot_section(d, lat1, lon1, lat2, lon2, label,
                  ds_deg=0.08, ncolors=16, d_max=None,
                  sigma_vsv=1.5, clim_rel=6.0,
                  out_dir='figures/xsections',
                  max_dist=None, km_per_in=None, panel_h_in=None, ref_mean=None,
                  long_ratio=3.0, moho_mask=0.5, xi_panel='xi', xi_ref='depth',
-                 clim_xi=5.0, div_gap=None, div_white=None, clim_diff=4.0, vlim=None):
-    global DIV_GAP, DIV_WHITE
+                 clim_xi=5.0, div_gap=None, div_white=None, clim_diff=4.0, vlim=None,
+                 panels=None, var_ref='model', allprof_vsv_ref=None, allprof_xi_ref=None,
+                 smooth=False, geol_tag='', vs_smooth=0.0, xi_gap=None):
+    global DIV_GAP, DIV_WHITE, RWB_GAP
     if div_gap is not None:
         DIV_GAP = div_gap
     if div_white is not None:
         DIV_WHITE = div_white
+    if xi_gap is not None:
+        RWB_GAP = xi_gap           # xi white-centre width: 0 = smooth red->white->blue
     """One cross-section. Panels: Vsv/Viso | dlnVsv | [xi] | uncertainty (no misfit).
     Scale is set by the LONGEST section (drawn 2:1 per panel, full landscape width);
     km_per_in and panel_h_in are computed once from it and passed to every section so
@@ -492,23 +782,53 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     Xi     = d['Xi'][:, zm] if 'Xi' in d else None
     Vpvs   = d['Vpvs'][:, zm] if _varies(d, 'Vpvs') else None   # only if actually inverted
     moho_prof = None
+    moho_ccp_prof = None
     _mi = getattr(plot_section, '_moho_interp', None)
+    _mc = getattr(plot_section, '_moho_ccp_interp', None)
 
     print(f"  Profile {label}: ({lat1:.2f},{lon1:.2f}) -> ({lat2:.2f},{lon2:.2f})")
     plat, plon, dist = _great_circle_path(lat1, lon1, lat2, lon2, ds_deg)
     print(f"  Length: {dist[-1]:.0f} km  |  {len(dist)} sample points")
     if _mi is not None:
         moho_prof = np.array([float(np.ravel(_mi(la, lo))[0]) for la, lo in zip(plat, plon)])
+    if _mc is not None:
+        moho_ccp_prof = np.array([float(np.ravel(_mc(la, lo))[0]) for la, lo in zip(plat, plon)])
 
     print("  Sampling ...")
     vsv_p = _sample_profile(Lon, Lat, Vsv, plon, plat)
+    if vs_smooth and vs_smooth > 0:               # gentle NaN-aware smooth of the Vs field only
+        vsv_p = _nan_gauss(vsv_p, vs_smooth)
     err_p = _sample_profile(Lon, Lat, Vsv_err, plon, plat) if Vsv_err is not None else None
     xi_p  = _sample_profile(Lon, Lat, Xi, plon, plat) if Xi is not None else None
     vpvs_p = _sample_profile(Lon, Lat, Vpvs, plon, plat) if Vpvs is not None else None
 
-    if ref_mean is None:
+    # CCP RF amplitude along the profile, interpolated onto the model depth grid z so it
+    # shares the D,Z mesh (and _pcolor's contourf + Moho overlays + bar) with the other panels.
+    ccp_p = None
+    _ccp = getattr(plot_section, '_ccp', None)
+    if _ccp is not None:
+        import plot_ccp_profiles as pcp
+        amp = pcp.sample_ccp(_ccp, plon, plat,
+                             method=getattr(plot_section, '_ccp_method', 'linear'))  # [nq, nz_ccp]
+        zg = _ccp['zg']
+        ccp_p = np.full((amp.shape[0], len(z)), np.nan)
+        for j in range(amp.shape[0]):
+            col = amp[j]; ok = np.isfinite(col)
+            if ok.sum() >= 2:                        # in-coverage column -> onto model z (NaN outside)
+                ccp_p[j] = np.interp(z, zg[ok], col[ok], left=np.nan, right=np.nan)
+
+    # dln reference baseline (--var-ref): model/yilgarn = model-node mean (passed in via
+    # ref_mean, yilgarn when _REF_NODES set); profile = this profile's own along-line mean;
+    # allprofiles = mean over every profile in the location file (precomputed in main).
+    if var_ref == 'profile':
+        ref_mean = np.nanmean(vsv_p, axis=0)
+    elif var_ref == 'allprofiles' and allprof_vsv_ref is not None:
+        ref_mean = np.asarray(allprof_vsv_ref, float)
+    elif ref_mean is None:
         ref_mean = _node_ref(Vsv)
     dln_p = (vsv_p - ref_mean[None, :]) / ref_mean[None, :] * 100.0
+    _ref_lbl = {'profile': 'profile mean at each depth',
+                'allprofiles': 'all-profiles mean at each depth'}.get(var_ref, _ref_label())
 
     D, Z = np.meshgrid(dist, z, indexing='ij')
 
@@ -525,15 +845,30 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     vname = _vname(d, is_zt)
 
     dxi_p = None
+    _xref_lbl = _xi_ref_label(xi_ref)
     if have_xi and xi_panel in ('dxi', 'both'):
-        xref = _xi_ref(Xi, xi_ref)
+        if var_ref == 'profile':
+            xref = np.nanmean(xi_p, axis=0); _xref_lbl = 'profile mean at each depth'
+        elif var_ref == 'allprofiles' and allprof_xi_ref is not None:
+            xref = np.asarray(allprof_xi_ref, float); _xref_lbl = 'all-profiles mean at each depth'
+        else:
+            xref = _xi_ref(Xi, xi_ref)
         dxi_p = (xi_p / xref[None, :] - 1.0) * 100.0
     rows = ['abs', 'rel']
     if vdiff_p is not None: rows.append('vdiff')
     if have_xi and xi_panel in ('xi', 'both'): rows.append('xi')
     if dxi_p is not None: rows.append('dxi')
     if vpvs_p is not None: rows.append('vpvs')
+    if ccp_p is not None: rows.append('ccp')
     if have_err: rows.append('err')
+    if panels:                               # keep only the requested panels, in that order
+        _alias = {'vsv': 'abs', 'dvsv': 'rel'}
+        want = [_alias.get(p.strip().lower(), p.strip().lower()) for p in panels]
+        sel = [r for r in want if r in rows]
+        if sel:
+            rows = sel
+        else:
+            print(f"  --panels {panels}: none available here ({rows}); drawing all")
     nrow = len(rows)
 
     xmax = dist[-1]; zbot = z[-1]
@@ -570,41 +905,65 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     print(f"  Panels {panel_w_in:.2f} x {panel_h_in:.2f} in  ->  VE {vexag:.2f}x")
 
     def _pcolor(ax, data, cmap, vmin, vmax, clabel, extend='both', title=''):
-        im = ax.pcolormesh(D, Z, data, cmap=cmap, vmin=vmin, vmax=vmax, shading='auto')
+        Zm = np.ma.array(data, mask=~np.isfinite(data))
+        if smooth:                            # MATLAB-style continuous shading (interp)
+            im = ax.pcolormesh(D, Z, Zm, cmap=cmap, vmin=vmin, vmax=vmax, shading='gouraud')
+        else:
+            lv = np.linspace(vmin, vmax, (ncolors or 16) + 1)   # contourf bands, like the maps
+            im = ax.contourf(D, Z, Zm, levels=lv, cmap=cmap, extend=extend, antialiased=True)
+            try:
+                im.set_edgecolor('face')
+            except Exception:
+                for c in getattr(im, 'collections', []):
+                    c.set_edgecolor('face')
         ax.set_ylim(zbot, 0); ax.set_xlim(0, xmax)
         ax.set_ylabel('Depth (km)', fontsize=9); ax.tick_params(labelsize=8)
         pos = ax.get_position()           # colorbar in its own axes: panel keeps its size
         cax = fig.add_axes([pos.x1 + 0.10 / fig_w, pos.y0, 0.16 / fig_w, pos.height])
         cb = fig.colorbar(im, cax=cax, extend=extend)
+        _apply_nice_ticks(cb, vmin, vmax)       # round 2-dec labels (4.53, 3.47, 0.90 ...)
         cb.set_label(clabel, fontsize=8); cb.ax.tick_params(labelsize=7)
         if title: ax.set_title(title, fontsize=9, loc='left')
         if moho_prof is not None:
             _draw_moho(ax, dist, moho_prof, zbot, moho_mask, lw=1.1)
+        if moho_ccp_prof is not None:       # most recent CCP refined Moho pick, solid red
+            ax.plot(dist, moho_ccp_prof, color='red', lw=1.4, alpha=0.95, zorder=4,
+                    solid_capstyle='round')
         return im
 
+    ncd = _ncd(ncolors, smooth)              # colours per map: 256 (smooth) or ncolors (bands)
     r = 0
-    _pcolor(axes[r], vsv_p, _cmap(CMAP_ABS, ncolors), vmin_v, vmax_v,
-            f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
-    _pcolor(axes[r], dln_p, _cmap('RdBu', ncolors), -clim_rel, clim_rel,
-            f'd{vname} (%)', title=f'd{vname} (%) vs {_ref_label()}'); r += 1
-    if vdiff_p is not None:
-        _pcolor(axes[r], vdiff_p, _cmap('RdBu', ncolors), -clim_diff, clim_diff,
+    if 'abs' in rows:
+        _pcolor(axes[r], vsv_p, _cmap(CMAP_ABS, ncd), vmin_v, vmax_v,
+                f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
+    if 'rel' in rows:
+        _pcolor(axes[r], dln_p, _cmap('RdBu', ncd), -clim_rel, clim_rel,
+                f'd{vname} (%)', title=f'd{vname} (%) vs {_ref_lbl}'); r += 1
+    if 'vdiff' in rows and vdiff_p is not None:
+        _pcolor(axes[r], vdiff_p, _cmap('RdBu', ncd), -clim_diff, clim_diff,
                 f'{vname} vs {_REF["label"]} (%)',
                 title=f'{vname}: this model vs {_REF["label"]} (%)  (blue = faster here)'); r += 1
-    if have_xi and xi_panel in ('xi', 'both'):
-        _pcolor(axes[r], xi_p, _cmap('RdBu', ncolors), XI_LIM[0], XI_LIM[1],
+    if 'xi' in rows and have_xi and xi_panel in ('xi', 'both'):
+        _pcolor(axes[r], xi_p, _cmap('rwb', ncd), XI_LIM[0], XI_LIM[1],
                 'xi', title=XI_TITLE); r += 1
-    if dxi_p is not None:
-        _pcolor(axes[r], dxi_p, _cmap('RdBu', ncolors), -clim_xi, clim_xi,
-                'dlnXi (%)', title=f'dlnXi (%) vs {_xi_ref_label(xi_ref)}'); r += 1
-    if vpvs_p is not None:
+    if 'dxi' in rows and dxi_p is not None:
+        _pcolor(axes[r], dxi_p, _cmap('RdBu', ncd), -clim_xi, clim_xi,
+                'dlnXi (%)', title=f'dlnXi (%) vs {_xref_lbl}'); r += 1
+    if 'vpvs' in rows and vpvs_p is not None:
         fv = vpvs_p[np.isfinite(vpvs_p)]
         mv, sv = np.nanmedian(fv), np.nanstd(fv)
-        _pcolor(axes[r], vpvs_p, _cmap(CMAP_VPVS, ncolors), mv - sigma_vsv * sv,
+        _pcolor(axes[r], vpvs_p, _cmap(CMAP_VPVS, ncd), mv - sigma_vsv * sv,
                 mv + sigma_vsv * sv, 'Vp/Vs', title='Vp/Vs'); r += 1
-    if have_err:
+    if 'ccp' in rows and ccp_p is not None:
+        import plot_ccp_profiles as pcp
+        cclim = getattr(plot_section, '_ccp_clim', 0.08)
+        cmap_ccp = pcp._ccp_cmap(getattr(plot_section, '_ccp_neutral', 0.25)).resampled(ncd)
+        ctag = getattr(plot_section, '_ccp_tag', '')
+        _pcolor(axes[r], ccp_p, cmap_ccp, -cclim, cclim, 'RF amplitude', extend='both',
+                title='CCP RF amplitude' + (f' (pvh.{ctag})' if ctag else '')); r += 1
+    if 'err' in rows and have_err:
         vmax_e = np.nanpercentile(err_p[np.isfinite(err_p)], 90)
-        _pcolor(axes[r], err_p, _cmap('YlOrRd', ncolors), 0, vmax_e,
+        _pcolor(axes[r], err_p, _cmap('YlOrRd', ncd), 0, vmax_e,
                 f'{vname} IQR/2', extend='max',
                 title='Model uncertainty (posterior IQR/2)'); r += 1
 
@@ -616,7 +975,8 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
         _geology_legend(fig, [geo], axes[-1], ncol=4 if panel_w_in > 5 else 2)
 
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f'xsection.{label}{_REF_TAG}.png')
+    _rtag = {'profile': '.ref-profile', 'allprofiles': '.ref-allprof'}.get(var_ref, _REF_TAG)
+    out = os.path.join(out_dir, f'xsection.{label}{_rtag}{geol_tag}.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     fig.savefig(out.replace('.png','.pdf'), bbox_inches='tight')
     plt.close(fig)
@@ -871,7 +1231,8 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                ref_mean=None, row_h_in=None, page_w_in=9.5, gap_in=0.55,
                ve=DEFAULT_VE, vmin=None, vmax=None, moho_mask=0.5,
                xi_ref='depth', clim_xi=5.0, div_gap=None, div_white=None, clim_vpvs=3.0,
-               clim_diff=4.0, maxd_km=None, tag='', group='', col_w_in=7.0):
+               clim_diff=4.0, maxd_km=None, tag='', group='', col_w_in=7.0,
+               moho_ccp_file=None, smooth=False):
     """Stack fields for all sections on one page. Rows = sections (same height, width
     proportional to length, longest spans the column width); columns = fields
     (field = 'vsv' or a list / comma string such as 'vsv,vpvs': side by side, same rows,
@@ -893,6 +1254,7 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
 
     FKEY = {'vsv':'Vsv','dvsv':'Vsv','xi':'Xi','dxi':'Xi','err':'Vsv_err',
             'vpvs':'Vpvs','dvpvs':'Vpvs','vdiff':'Vsv'}
+    ncd = _ncd(ncolors, smooth)              # colours per map: 256 (smooth) or ncolors (bands)
     F = []                                   # per-field settings
     for f in fields:
         arrname = FKEY.get(f, 'Vsv')
@@ -914,14 +1276,14 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             print(f"  dlnXi reference ({_xi_ref_label(xi_ref)}): "
                   f"{np.nanmin(st['ref']):.3f}-{np.nanmax(st['ref']):.3f}")
         st['cmap'], st['clab'], st['ext'] = {
-            'vsv':   (_cmap(CMAP_ABS, ncolors), f'{vname} (km/s)', 'both'),
-            'dvsv':  (_cmap('RdBu', ncolors), f'd{vname} (%)', 'both'),
-            'xi':    (_cmap('RdBu', ncolors), 'xi', 'both'),
-            'dxi':   (_cmap('RdBu', ncolors), 'dlnXi (%)', 'both'),
-            'vpvs':  (_cmap(CMAP_VPVS, ncolors), 'Vp/Vs', 'both'),
-            'dvpvs': (_cmap('RdBu', ncolors), 'dln(Vp/Vs) (%)', 'both'),
-            'vdiff': (_cmap('RdBu', ncolors), f'{vname} vs {_REF["label"] if _REF else "ref"} (%)', 'both'),
-        }.get(f, (_cmap('YlOrRd', ncolors), f'{vname} IQR/2', 'max'))
+            'vsv':   (_cmap(CMAP_ABS, ncd), f'{vname} (km/s)', 'both'),
+            'dvsv':  (_cmap('RdBu', ncd), f'd{vname} (%)', 'both'),
+            'xi':    (_cmap('rwb', ncd), 'xi', 'both'),
+            'dxi':   (_cmap('RdBu', ncd), 'dlnXi (%)', 'both'),
+            'vpvs':  (_cmap(CMAP_VPVS, ncd), 'Vp/Vs', 'both'),
+            'dvpvs': (_cmap('RdBu', ncd), 'dln(Vp/Vs) (%)', 'both'),
+            'vdiff': (_cmap('RdBu', ncd), f'{vname} vs {_REF["label"] if _REF else "ref"} (%)', 'both'),
+        }.get(f, (_cmap('YlOrRd', ncd), f'{vname} IQR/2', 'max'))
         st['name'] = {'vsv': vname, 'dvsv': f'd{vname}', 'dxi': 'dlnXi', 'xi': 'xi', 'vpvs': 'Vp/Vs',
                       'dvpvs': 'dln(Vp/Vs)', 'err': f'{vname} error',
                       'vdiff': f'{vname} minus {_REF["label"] if _REF else "ref"}'}.get(f, f)
@@ -931,11 +1293,11 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
 
     _mi = None
     if moho_file:
-        try:
-            from scipy.interpolate import RectBivariateSpline
-            md=np.loadtxt(moho_file, skiprows=11)
-            mla=np.unique(md[:,0]); mlo=np.unique(md[:,1])
-            _mi=RectBivariateSpline(mla,mlo,md[:,2].reshape(len(mla),len(mlo)),kx=1,ky=1)
+        try: _mi = _load_moho_interp(moho_file)
+        except Exception: pass
+    _mc = None
+    if moho_ccp_file:
+        try: _mc = _load_moho_interp(moho_ccp_file)
         except Exception: pass
 
     prof=[]
@@ -954,7 +1316,10 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
         mp=None
         if _mi is not None:
             mp=np.array([float(np.ravel(_mi(a,o))[0]) for a,o in zip(plat,plon)])
-        prof.append(dict(lab=lab,dist=dist,data=data,moho=mp,plat=plat,plon=plon))
+        mp_ccp=None
+        if _mc is not None:
+            mp_ccp=np.array([float(np.ravel(_mc(a,o))[0]) for a,o in zip(plat,plon)])
+        prof.append(dict(lab=lab,dist=dist,data=data,moho=mp,moho_ccp=mp_ccp,plat=plat,plon=plon))
     maxd=max(p['dist'][-1] for p in prof)
     if maxd_km:                 # shared scale across split pages (same km/inch on each)
         maxd=max(maxd, maxd_km)
@@ -1015,7 +1380,16 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
             D,Z=np.meshgrid(p['dist'],z,indexing='ij')
             data = p['data'][st['f']]
             vmn, vmx = limits(st['f'], data)
-            im=ax.pcolormesh(D,Z,data,cmap=st['cmap'],vmin=vmn,vmax=vmx,shading='auto')
+            Zm = np.ma.array(data, mask=~np.isfinite(data))
+            if smooth:                        # MATLAB-style continuous shading
+                im=ax.pcolormesh(D,Z,Zm,cmap=st['cmap'],vmin=vmn,vmax=vmx,shading='gouraud')
+            else:
+                lv = np.linspace(vmn, vmx, (ncolors or 16) + 1)   # contourf bands, like the maps
+                im=ax.contourf(D,Z,Zm,levels=lv,cmap=st['cmap'],extend=st['ext'],antialiased=True)
+                try:
+                    im.set_edgecolor('face')
+                except Exception:
+                    for c in getattr(im,'collections',[]): c.set_edgecolor('face')
             ax.set_ylim(zbot,0); ax.set_xlim(0,p['dist'][-1])
             ax.set_ylabel('Depth',fontsize=7); ax.tick_params(labelsize=6)
             ax.set_xticks(np.arange(0,p['dist'][-1]+1,200))
@@ -1025,10 +1399,14 @@ def plot_stack(d, sections, field, out_dir, moho_file=None, ds_deg=0.08,
                     bbox=dict(fc='white', ec='none', alpha=1.0, pad=1.5))
             if p['moho'] is not None:
                 _draw_moho(ax, p['dist'], p['moho'], zbot, moho_mask, lw=0.9)
+            if p.get('moho_ccp') is not None:
+                ax.plot(p['dist'], p['moho_ccp'], color='red', lw=1.1, alpha=0.95,
+                        zorder=4, solid_capstyle='round')
             if i==n-1: ax.set_xlabel('Distance (km)',fontsize=8)
             # per-panel colorbar immediately right of THIS panel
             cax=fig.add_axes([(x0_in + w_in + 0.09) / fig_w, y0, 0.13 / fig_w, rh])
             cb=fig.colorbar(im,cax=cax,extend=st['ext']); cb.ax.tick_params(labelsize=6)
+            _apply_nice_ticks(cb, vmn, vmx)
             if i==0: cb.set_label(st['clab'],fontsize=8)
             # boundary names only above the first column (arrows on every column)
             geo_res.append(_add_geology(ax, [ax], p['plon'], p['plat'], p['dist'],
@@ -1062,6 +1440,13 @@ def main():
                     help='dln fields (dVsv, dlnXi, dln Vp/Vs) relative to this tectonic '
                          'domain\'s mean at each depth, e.g. yilgarn (basemap/domains.csv); '
                          'outputs get a .ref-<domain> tag. Default: whole-model mean')
+    ap.add_argument('--var-ref', default='model',
+                    choices=['model', 'yilgarn', 'profile', 'allprofiles'],
+                    help='baseline for the variation (dVsv/dlnXi) panels, per depth: '
+                         'model = whole-model mean (default); yilgarn = Yilgarn-domain mean '
+                         '(= --ref-domain yilgarn); profile = THIS profile\'s own along-line '
+                         'mean; allprofiles = mean of all profiles in --load-sections. '
+                         'profile/allprofiles tag outputs .ref-profile / .ref-allprof')
     ap.add_argument('--max-node-dist', type=float, default=MAX_NODE_DIST,
                     help='blank section points further than this (deg) from any model node, '
                          'as on the maps (default 0.5; 0 = no masking)')
@@ -1075,17 +1460,49 @@ def main():
                     help='±clim for dlnVsv %% (default 6)')
     ap.add_argument('--ncolors',   type=int,   default=16,
                     help='Discrete colour levels per colormap (default 16; e.g. 32 for finer)')
+    ap.add_argument('--vs-smooth', dest='vs_smooth', type=float, default=0.0, metavar='SIGMA',
+                    help='gently Gaussian-smooth the Vs panel only (NaN-aware, SIGMA in grid '
+                         'cells; try 1-2). 0 = off. Does not touch xi / CCP.')
+    ap.add_argument('--xi-gap', dest='xi_gap', type=float, default=None, metavar='GAP',
+                    help='xi colorbar white-centre width (default 0.12, a tight white band). '
+                         'Lower = more gradual red->white->blue transition; 0 = fully smooth.')
+    ap.add_argument('--field-style', default='contourf', choices=['contourf', 'smooth'],
+                    help='contourf = discrete --ncolors bands (default); smooth = continuous '
+                         'interpolated shading (pcolormesh gouraud), matching the MATLAB landscape')
     ap.add_argument('--ginput',  action='store_true',
                     help='Pick sections interactively on the profile-location map (2022 '
                          'colours, boundaries, stations); with --load-sections the current '
                          'lines are shown dashed. Lines are named NS1../EW1.. by orientation. '
                          'Combine with --save-sections FILE (old file kept as FILE.bak.<time>)')
     ap.add_argument('--moho',      default=None,
-                    help='AR23 Moho file (AR23-moho-hmp.txt) to overlay as dashed line')
+                    help='Moho overlay: AusMoho grid text (AR23-moho-hmp.txt, dashed black + '
+                         'grey veil below) OR a CCP refined pick .mat (moho_refined)')
+    ap.add_argument('--moho-ccp',  default=None,
+                    help='most recent CCP refined Moho pick .mat (moho_ccp_refined.final.mat) '
+                         'overlaid as a solid red line along the profile (no veil); pair with '
+                         '--moho AR23... to show the CCP pick over the regional AusMoho')
+    ap.add_argument('--ccp-pmat',  default=None,
+                    help='CCP RF stack P.mat (pvh.4 current) -> adds a "ccp" panel: RF amplitude '
+                         'sampled along the profile (contourf, same Moho overlays). Select it with '
+                         "--panels vsv,xi,ccp. Reads the CMP cube from P.ofile1 (or --ccp-cmp).")
+    ap.add_argument('--ccp-cmp',   default=None, help='override the CMP cube file (else from P.ofile1)')
+    ap.add_argument('--ccp-amp-var', default='cmp', help='volume variable in the CMP file (default cmp)')
+    ap.add_argument('--ccp-clim',  type=float, default=0.08, help='CCP panel symmetric colour limit (±)')
+    ap.add_argument('--ccp-neutral', type=float, default=0.25,
+                    help='CCP soft white centre: fraction of ±clim near zero that fades to white')
+    ap.add_argument('--ccp-method', default='linear', choices=['linear', 'nearest', 'cubic'],
+                    help='CCP smooth-pass interpolant')
+    ap.add_argument('--xi-lim', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
+                    help='xi colour range for the absolute xi panel, e.g. 0.95 1.05 '
+                         '(default 0.92 1.08)')
     ap.add_argument('--xi-squared', action='store_true',
-                    help='DEPRECATED no-op: the Fvs Xi is already conventional xi=(Vsh/Vsv)^2, plotted as-is')
+                    help='show conventional xi = (Vsh/Vsv)^2 (the Fvs Xi is linear Vsh/Vsv), 0.88-1.12')
     ap.add_argument('--xi-panel', default='xi', choices=['xi', 'dxi', 'both'],
                     help='per-section xi row(s): xi, dlnXi, or both (ZT models)')
+    ap.add_argument('--panels', default=None,
+                    help='per-section: keep only these panels, in this order (comma list of '
+                         'vsv,dvsv,xi,dxi,vpvs,vdiff,err). e.g. --panels vsv,xi for a 2-panel plot. '
+                         'Default: all available.')
     ap.add_argument('--xi-ref', default='depth', choices=['depth', 'global'],
                     help='dlnXi reference: whole-model mean at each depth (default) or '
                          'one whole-model mean over all depths')
@@ -1163,6 +1580,39 @@ def main():
                          'litho,domain,boundaries,names (default: domain,boundaries,names - '
                          'the index-map colours plus crustal-boundary arrows)')
     ap.add_argument('--no-strips', action='store_true', help='plain sections, no geology strips')
+    ap.add_argument('--geol-track', action='store_true',
+                    help='add a combined greenstone-fill + gold-deposit track above the domain bar. '
+                         'Greenstone from --greenstone-npz; gold projected onto the profile within '
+                         '--gold-swath km. Tags outputs .gold-gs')
+    ap.add_argument('--greenstone-npz', default='data/geology/yilgarn_units.npz',
+                    help='Yilgarn rock-type polygons for the greenstone band (default data/geology/)')
+    ap.add_argument('--gold-swath', type=float, default=50.0,
+                    help='project gold deposits within this many km of the profile line (default 50)')
+    ap.add_argument('--gold-style', default='markers', choices=['markers', 'lines'],
+                    help='markers = log-area circles sized by endowment (default); '
+                         'lines = thin vertical ticks, no size (cleaner where deposits are dense)')
+    ap.add_argument('--craton-line', action='store_true',
+                    help='draw a thick red line along the top of the domain bar where the profile '
+                         'is inside the Yilgarn/Pilbara craton, with red margin ticks')
+    ap.add_argument('--craton-outline', default='data/geology/yilgarn_craton_outline.txt',
+                    help='craton outline (lon lat, blank-line segments) for --craton-line')
+    ap.add_argument('--fault', action='append', default=[], metavar='LABEL:LON,LAT',
+                    help='mark a fault with a red down-arrow on the top strip (same style as the '
+                         'boundary crossings, but red + thick) at the profile point nearest '
+                         "LON,LAT, with a red LABEL above. Repeatable. e.g. --fault 'Ida Fault:121.3,-29.5'")
+    ap.add_argument('--highlight-boundary', dest='highlight_boundary', action='append',
+                    default=[], metavar='NPZNAME:LABEL',
+                    help='draw a named crustal boundary (from the boundaries npz) as the red '
+                         'fault arrow at its TRUE per-profile crossing, labelled LABEL. '
+                         "Repeatable. e.g. --highlight-boundary 'Youanmi east:Ida Fault'")
+    ap.add_argument('--gold-file', default=None,
+                    help='deposit list: whitespace/comma columns "lon lat [endowment] [kind]". '
+                         'If omitted, reads <deposit-dir>/<kind>_deposits.mat (as the maps do).')
+    ap.add_argument('--deposit-dir', default=None,
+                    help='dir holding <kind>_deposits.mat (gold_deposits.mat ...); default repo matlab/')
+    ap.add_argument('--deposits', default='gold',
+                    help='deposit kinds for the track, comma-separated (default gold; '
+                         'gold,copper,lithium,nickel)')
     ap.add_argument('--index-only', action='store_true',
                     help='with --index-map: draw only the map, do not re-plot any sections')
     ap.add_argument('--domain-colours', default='map2022',
@@ -1213,9 +1663,12 @@ def main():
     if args.abs_skip:
         global ABS_SKIP
         ABS_SKIP = tuple(args.abs_skip)
+    global XI_SQ, XI_LIM, XI_TITLE
     if args.xi_squared:
-        print("  NOTE: --xi-squared is deprecated and ignored; the Fvs Xi is already "
-              "conventional xi=(Vsh/Vsv)^2 and is plotted as-is.")
+        XI_SQ, XI_LIM = True, (0.88, 1.12)
+        XI_TITLE = 'xi = (Vsh/Vsv)$^2$ (blue = Vsh>Vsv)'
+    if args.xi_lim:                          # explicit xi colour range, e.g. 0.95 1.05
+        XI_LIM = (float(args.xi_lim[0]), float(args.xi_lim[1]))
     MAX_NODE_DIST = args.max_node_dist
 
     global _GEO
@@ -1224,14 +1677,23 @@ def main():
         args.strips = None
     if args.index_only:
         args.index_map = True
+    _deposits = _deposit_points(args) if args.geol_track else None
+    _gs_npz = args.greenstone_npz if args.geol_track else None
+    _craton = args.craton_outline if args.craton_line else None
+    _faults = _parse_faults(args.fault)
+    _highlight = _parse_highlight(args.highlight_boundary)
+    geol_tag = '.gold-gs' if args.geol_track else ''
     if args.strips and not args.index_only:
         geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz, args.bnd_lines,
-                    args.domain_colours)
+                    args.domain_colours, _gs_npz, _deposits, args.gold_swath, _craton, _faults,
+                    _highlight)
         _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")
     d = _load_fvs(args.fvs, args.vel)
     plot_section._fvsname = args.fvs   # for Viso/Vsv label detection
+    if args.var_ref == 'yilgarn' and not args.ref_domain:
+        args.ref_domain = 'yilgarn'    # --var-ref yilgarn == --ref-domain yilgarn
     if args.ref_domain:                # dln reference = a tectonic domain's mean
         from domains import Domains
         D = Domains(_resolve_npz('TECTONICS_NPZ', 'wa_tectonics.npz', args.tect_npz))
@@ -1248,16 +1710,20 @@ def main():
         _REF = _load_ref(*ref_args)
     # Optional Moho interpolator
     plot_section._moho_interp = None
+    plot_section._moho_ccp_interp = None
     if args.moho:
         try:
-            from scipy.interpolate import RectBivariateSpline
-            md = np.loadtxt(args.moho, skiprows=11)
-            mlats = np.unique(md[:,0]); mlons = np.unique(md[:,1])
-            mg = md[:,2].reshape(len(mlats), len(mlons))
-            plot_section._moho_interp = RectBivariateSpline(mlats, mlons, mg, kx=1, ky=1)
+            plot_section._moho_interp = _load_moho_interp(args.moho)
             print(f'  Moho overlay loaded: {args.moho}')
         except Exception as e:
             print(f'  Moho load failed: {e}')
+    if args.moho_ccp:
+        try:
+            plot_section._moho_ccp_interp = _load_moho_interp(args.moho_ccp)
+            print(f'  CCP Moho overlay loaded: {args.moho_ccp}')
+        except Exception as e:
+            print(f'  CCP Moho load failed: {e}')
+    _set_ccp_stack(args)
     print(f"  {len(d['Lon'])} nodes, {len(d['z'])} depth levels "
           f"({d['z'][0]:.1f}-{d['z'][-1]:.1f} km)")
 
@@ -1267,7 +1733,10 @@ def main():
               out_dir=args.out_dir, moho_mask=moho_mask,
               xi_panel=args.xi_panel, xi_ref=args.xi_ref, clim_xi=args.clim_xi,
               div_gap=args.div_gap, div_white=args.div_white,
-              clim_diff=args.clim_diff, vlim=args.vlim)
+              clim_diff=args.clim_diff, vlim=args.vlim, var_ref=args.var_ref,
+              smooth=(args.field_style == 'smooth'), geol_tag=geol_tag, vs_smooth=args.vs_smooth,
+              xi_gap=args.xi_gap,
+              panels=([p for p in args.panels.split(',') if p.strip()] if args.panels else None))
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
     sections = []
@@ -1367,7 +1836,9 @@ def main():
             ap.error(f"--stack: unknown field(s) {bad}; choose from {', '.join(STACK_FIELDS)}")
         zmask=(d['z']<=args.d_max) if args.d_max else np.ones(len(d['z']),bool)
         rmean=_node_ref(d['Vsv'][:,zmask])
-        kw = dict(moho_file=args.moho, ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
+        kw = dict(moho_file=args.moho, moho_ccp_file=args.moho_ccp,
+                  smooth=(args.field_style == 'smooth'),
+                  ds_deg=args.ds, d_max=args.d_max, ref_mean=rmean,
                   ve=args.stack_ve, vmin=args.vmin, vmax=args.vmax, ncolors=args.ncolors,
                   moho_mask=None if args.no_moho_mask else args.moho_mask_alpha,
                   xi_ref=args.xi_ref, clim_xi=args.clim_xi, div_gap=args.div_gap,
@@ -1402,6 +1873,20 @@ def main():
     Vsv_all = d['Vsv'][:, zmask]
     ref_mean = _node_ref(Vsv_all)
 
+    if args.var_ref == 'allprofiles':        # pooled mean of every profile in the location file
+        av, axi = [], []
+        has_xi = 'Xi' in d
+        Xi_all = d['Xi'][:, zmask] if has_xi else None
+        for (la1, lo1, la2, lo2, _lab) in sections:
+            pla, plo, _ = _great_circle_path(la1, lo1, la2, lo2, args.ds)
+            av.append(_sample_profile(d['Lon'], d['Lat'], Vsv_all, plo, pla))
+            if has_xi:
+                axi.append(_sample_profile(d['Lon'], d['Lat'], Xi_all, plo, pla))
+        kw['allprof_vsv_ref'] = np.nanmean(np.vstack(av), axis=0)
+        if axi:
+            kw['allprof_xi_ref'] = np.nanmean(np.vstack(axi), axis=0)
+        print(f"  --var-ref allprofiles: pooled mean over {len(sections)} profile(s)")
+
     kw['max_dist']   = maxd
     kw['km_per_in']  = km_per_in
     kw['panel_h_in'] = panel_h_in
@@ -1414,7 +1899,8 @@ def main():
         from functools import partial
         print(f"Plotting {len(sections)} sections on {args.nproc} cores ...")
         worker = partial(_section_worker, fvs=args.fvs, moho=args.moho, kw=kw,
-                         geo_args=geo_args, vel=args.vel, ref_args=ref_args)
+                         geo_args=geo_args, vel=args.vel, ref_args=ref_args,
+                         moho_ccp=args.moho_ccp, ccp_args=args)
         with Pool(args.nproc) as pool:
             pool.map(worker, sections)
     else:
@@ -1422,7 +1908,8 @@ def main():
             plot_section(d, *sec, **kw)
 
 
-def _section_worker(sec, fvs, moho, kw, geo_args=None, vel='model', ref_args=None):
+def _section_worker(sec, fvs, moho, kw, geo_args=None, vel='model', ref_args=None,
+                    moho_ccp=None, ccp_args=None):
     """Standalone worker for parallel section plotting (reloads Fvs per process)."""
     import numpy as np
     global _GEO
@@ -1434,15 +1921,15 @@ def _section_worker(sec, fvs, moho, kw, geo_args=None, vel='model', ref_args=Non
     d = _load_fvs(fvs, vel)
     plot_section._fvsname = fvs
     plot_section._moho_interp = None
+    plot_section._moho_ccp_interp = None
     if moho:
-        try:
-            from scipy.interpolate import RectBivariateSpline
-            md = np.loadtxt(moho, skiprows=11)
-            mlats = np.unique(md[:,0]); mlons = np.unique(md[:,1])
-            mg = md[:,2].reshape(len(mlats), len(mlons))
-            plot_section._moho_interp = RectBivariateSpline(mlats, mlons, mg, kx=1, ky=1)
-        except Exception:
-            pass
+        try: plot_section._moho_interp = _load_moho_interp(moho)
+        except Exception: pass
+    if moho_ccp:
+        try: plot_section._moho_ccp_interp = _load_moho_interp(moho_ccp)
+        except Exception: pass
+    if ccp_args is not None:          # reload the CCP cube in this process
+        _set_ccp_stack(ccp_args)
     plot_section(d, *sec, **kw)
 
 

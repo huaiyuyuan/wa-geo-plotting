@@ -507,10 +507,113 @@ def legend_handles(all_runs, min_km=0.0, max_items=None):
     return [Patch(facecolor=c, edgecolor="none", label=n) for _, (n, c) in items]
 
 
+# --------------------------------------------------------------------------
+# Greenstone + mineral-deposit overlay track (one combined strip)
+# --------------------------------------------------------------------------
+def greenstone_index_from_npz(path, rocktypes=("greenstone",), colour="#1b7837"):
+    """PolygonIndex of just the greenstone (or given rock-type) polygons from a
+    yilgarn_units.npz, all one class so runs_from_samples fills a single band."""
+    d = np.load(path, allow_pickle=True)
+    rock = np.asarray(d["rocktype"]).astype(str)
+    keep = np.isin(rock, list(rocktypes))
+    rings = [r for r, k in zip(d["rings"], keep) if k]
+    n = len(rings)
+    return PolygonIndex(rings, [colour] * n, ["Greenstone"] * n)
+
+
+def craton_index_from_outline(path, colour="red"):
+    """PolygonIndex from a craton outline text file (lon lat per line; blank line or a
+    %/# comment separates closed segments), all one 'Craton' class. Yilgarn+Pilbara."""
+    segs, cur = [], []
+    with open(path) as f:
+        for ln in f:
+            s = ln.strip()
+            if not s or s.startswith(("%", "#")):
+                if len(cur) >= 3:
+                    segs.append(np.asarray(cur, float))
+                cur = []
+                continue
+            p = s.split()
+            if len(p) >= 2:
+                try:
+                    cur.append((float(p[0]), float(p[1])))
+                except ValueError:
+                    pass
+    if len(cur) >= 3:
+        segs.append(np.asarray(cur, float))
+    return PolygonIndex(segs, [colour] * len(segs), ["Craton"] * len(segs))
+
+
+def draw_craton_bar(sax, runs, colour="0.45", y0=1.02, y1=1.30):
+    """Grey bar in the gap just ABOVE the domain-bar strip `sax` (outside the domain
+    colours, no extra row) spanning each in-craton run. y0/y1 are domain-bar axes
+    fraction (>1 = above its top edge); clip_on=False lets it draw into the gap."""
+    from matplotlib.patches import Rectangle
+    tr = blended_transform_factory(sax.transData, sax.transAxes)
+    for rn in runs:
+        if rn.name:                # inside the craton
+            sax.add_patch(Rectangle((rn.d0, y0), rn.d1 - rn.d0, y1 - y0, transform=tr,
+                                     facecolor=colour, edgecolor="none", zorder=7,
+                                     clip_on=False))
+
+
+def draw_fault_arrow(top_sax, strip_axes, dc, label=None, color="red", lw=2.6, head=13,
+                     length=20.0, name_fontsize=7):
+    """Fault marker in the same style as the crustal-boundary crossings: a down-arrow standing
+    on the TOP strip at along-profile distance dc, a thin tick through every strip, and a rotated
+    label above — but RED with a large stroke (vs the black boundary arrows). E.g. the Ida Fault."""
+    tr = blended_transform_factory(top_sax.transData, top_sax.transAxes)
+    top_sax.annotate("", xy=(dc, 1.0), xycoords=tr, xytext=(0, length),
+                     textcoords="offset points", annotation_clip=False, zorder=9,
+                     arrowprops=dict(arrowstyle="-|>", color=color, lw=lw,
+                                     mutation_scale=head, shrinkA=0, shrinkB=0))
+    for sax in strip_axes:                       # thin red tick through the strips
+        sax.axvline(dc, color=color, lw=1.0, zorder=7)
+    if label:
+        top_sax.annotate(label, (dc, 1.0), xycoords=tr, xytext=(1, length + 2),
+                         textcoords="offset points", rotation=35, ha="left", va="bottom",
+                         fontsize=name_fontsize, color=color, fontweight="bold",
+                         annotation_clip=False)
+
+
+def project_to_profile(plon, plat, dist, dep_lon, dep_lat, swath_km=50.0):
+    """Project points onto the profile. Returns along-track distance of the nearest
+    profile node (km), perpendicular distance (km), and keep = perp <= swath_km.
+    Nearest node is found in an azimuthal-equidistant km frame about the profile midpoint."""
+    plon = np.asarray(plon, float); plat = np.asarray(plat, float); dist = np.asarray(dist, float)
+    dep_lon = np.asarray(dep_lon, float); dep_lat = np.asarray(dep_lat, float)
+    if dep_lon.size == 0:
+        return np.array([]), np.array([]), np.array([], bool)
+    mid = len(plon) // 2
+    P = _local_xy(plon, plat, plon[mid], plat[mid])          # (n, 2) km
+    Q = _local_xy(dep_lon, dep_lat, plon[mid], plat[mid])    # (m, 2) km
+    d2 = (Q[:, None, 0] - P[None, :, 0]) ** 2 + (Q[:, None, 1] - P[None, :, 1]) ** 2
+    j = d2.argmin(1)
+    perp = np.sqrt(d2[np.arange(len(Q)), j])
+    return dist[j], perp, perp <= swath_km
+
+
+def draw_deposits_on_strip(sax, proj_km, size, marker="o", facecolor=(1.0, 0.84, 0.0),
+                           edgecolor="k", y=0.5, style="markers"):
+    """Projected deposits on a strip axis. style='markers' = circles sized by `size`
+    (points^2); style='lines' = thin vertical ticks of uniform width (no size)."""
+    proj_km = np.asarray(proj_km, float)
+    if proj_km.size == 0:
+        return
+    tr = blended_transform_factory(sax.transData, sax.transAxes)
+    if style == "lines":
+        sax.vlines(proj_km, 0.0, 1.0, transform=tr, color=facecolor, lw=0.7,
+                   alpha=0.85, zorder=9)
+    else:
+        sax.scatter(proj_km, np.full(proj_km.size, y), s=size, marker=marker,
+                    facecolor=facecolor, edgecolor=edgecolor, linewidths=0.3,
+                    transform=tr, zorder=9, clip_on=False)
+
+
 @dataclass
 class StripResult:
     strip_axes: list
-    runs: dict          # {"litho": [Run...], "tectonic": [...]}
+    runs: dict          # {"litho": [Run...], "tectonic": [...], "geol": [...]}
     crossings: list     # [Crossing...]
 
 
@@ -518,7 +621,9 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
                        tectonic=None, boundaries=None, step_km=0.5,
                        height_in=0.14, gap_in=0.03, labels=True,
                        label_domains=True, label_boundaries=False, dedupe_km=3.0,
-                       boundary_lines=False):
+                       boundary_lines=False, greenstone=None, deposits=None,
+                       dep_swath_km=50.0, geol_label="Au / greenstone", craton=None,
+                       faults=None, highlight_boundaries=None):
     """One-call entry point for plot_xsection.
 
     top_ax      the uppermost Vs panel of the section (strips go above it)
@@ -526,9 +631,13 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
     lon, lat, dist  the profile exactly as plotted (dist = panel x axis, km)
     litho, tectonic  PolygonIndex or None; drawn bottom-up in that order
     boundaries  BoundarySet or None
+    greenstone  PolygonIndex (one-class greenstone) -> filled band on a combined track
+    deposits    dict(lon, lat, size[, marker, facecolor]) -> markers on that track,
+                projected onto the profile within dep_swath_km (km)
     """
     lon_f, lat_f, d_f = resample_profile(lon, lat, dist, step_km)
     strips, runs = [], {}
+    tect_sax = None
     for key, index, lab in (("litho", litho, "Litho"),
                             ("tectonic", tectonic, "Domain")):
         if index is None:
@@ -536,21 +645,81 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
         r = runs_from_samples(d_f, index.sample(lon_f, lat_f), index)
         sax = strip_axes_above(top_ax, height_in, gap_in, level=len(strips))
         draw_strip(sax, r, label=lab if labels else None)
-        if key == "tectonic" and label_domains:
-            annotate_runs(sax, r)
+        if key == "tectonic":
+            tect_sax = sax
+            if label_domains:
+                annotate_runs(sax, r)
         strips.append(sax)
         runs[key] = r
+    # Craton extent: a grey bar in the gap above the domain bar (no extra row, so the
+    # next strip stays close)
+    if craton is not None and tect_sax is not None:
+        cr = runs_from_samples(d_f, craton.sample(lon_f, lat_f), craton)
+        draw_craton_bar(tect_sax, cr)
+        runs["craton"] = cr
+    # Combined greenstone-fill + gold-deposit track, above the domain bar
+    if greenstone is not None or deposits is not None:
+        sax = strip_axes_above(top_ax, max(height_in, 0.17), gap_in, level=len(strips))
+        gr = []
+        if greenstone is not None:
+            gr = runs_from_samples(d_f, greenstone.sample(lon_f, lat_f), greenstone)
+            for rn in gr:
+                if rn.name:
+                    sax.axvspan(rn.d0, rn.d1, color=rn.color, lw=0, alpha=0.9)
+        if deposits is not None and len(np.asarray(deposits.get("lon", []))):
+            proj, perp, keep = project_to_profile(lon, lat, dist,
+                                                  deposits["lon"], deposits["lat"], dep_swath_km)
+            s = np.asarray(deposits.get("size", 18.0), float)
+            s = s[keep] if s.ndim else s
+            draw_deposits_on_strip(sax, proj[keep], s,
+                                   marker=deposits.get("marker", "o"),
+                                   facecolor=deposits.get("facecolor", (1.0, 0.84, 0.0)),
+                                   style=deposits.get("style", "markers"))
+            print(f"  gold track: {int(keep.sum())}/{keep.size} deposits within {dep_swath_km:.0f} km")
+        if labels:
+            sax.text(-0.005, 0.5, geol_label, transform=sax.transAxes, ha="right",
+                     va="center", fontsize=7)
+        strips.append(sax)
+        runs["geol"] = gr
+    # Named faults: red down-arrow on the TOP strip, crustal-boundary style (e.g. Ida Fault)
+    if faults and strips:
+        for flabel, flon, flat, _fhalf in faults:
+            proj, _perp, keep = project_to_profile(lon, lat, dist, [flon], [flat], 1e9)
+            if keep.size and keep[0]:
+                dc = float(proj[0])
+                draw_fault_arrow(strips[-1], strips, dc, label=flabel)
+                print(f"  fault arrow: {flabel} at {dc:.0f} km")
+            else:
+                print(f"  fault arrow: {flabel} projects off the profile - skipped")
     crossings = []
     if boundaries is not None:
         # the plotted great-circle path is a straight line in the crossing frame
         # (azimuthal equidistant about its midpoint), so its own nodes are exact here
         crossings = boundaries.crossings(lon, lat, dist, dedupe_km=dedupe_km)
-        draw_boundaries(panel_axes, crossings, strip_axes=strips,
+        hl = {str(k).lower(): v for k, v in (highlight_boundaries or [])}
+
+        def _is_hl(c):
+            return bool(hl) and any(str(nm).lower() in hl for nm in c.names)
+        normal = [c for c in crossings if not _is_hl(c)]
+        draw_boundaries(panel_axes, normal, strip_axes=strips,
                         label_names=label_boundaries, span_km=dist[-1] - dist[0],
                         panel_lines=boundary_lines)
+        if strips:                       # highlighted boundaries -> red fault arrow + label
+            for c in crossings:
+                if not _is_hl(c):
+                    continue
+                lab = next((hl[str(nm).lower()] for nm in c.names
+                            if str(nm).lower() in hl), None)
+                draw_fault_arrow(strips[-1], strips, c.dist, label=lab)
+                print(f"  highlight: {lab} at {c.dist:.0f} km "
+                      f"(boundary {', '.join(c.names)})")
     # Keep the panel title(s) above the strips (and boundary names) rather than under them.
     if strips:
-        _move_titles(top_ax, strips[-1],
-                     pad=(48.0 if label_boundaries else 22.0) if crossings else 2.0)
+        _pad = 2.0
+        if crossings:
+            _pad = max(_pad, 48.0 if label_boundaries else 22.0)
+        if faults or highlight_boundaries:
+            _pad = max(_pad, 30.0)                # clear the red fault arrow + label
+        _move_titles(top_ax, strips[-1], pad=_pad)
     top_ax.set_xlim(dist[0], dist[-1])
     return StripResult(strips, runs, crossings)
