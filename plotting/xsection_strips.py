@@ -369,18 +369,19 @@ class BoundarySet:
 # --------------------------------------------------------------------------
 # Drawing
 # --------------------------------------------------------------------------
-def strip_axes_above(ax, height_in=0.14, gap_in=0.03, level=0):
+def strip_axes_above(ax, height_in=0.14, gap_in=0.03, level=0, lift_in=0.0):
     """Thin axes above `ax` sharing its x axis; level=1 stacks above level 0.
 
     Uses inset_axes in axes-fraction coordinates so it works with any layout
     the cross-section script already uses (gridspec, per-panel colorbars,
-    stacked sections), without shrinking the Vs panel.
+    stacked sections), without shrinking the Vs panel. lift_in adds a fixed extra
+    gap below this strip (in inches) — used to open room for the craton bar.
     """
     fig = ax.figure
     ax.apply_aspect()  # settle fixed-aspect panels (--stack-ve) before sizing
     h_ax_in = ax.get_position().height * fig.get_figheight()
     h, g = height_in / h_ax_in, gap_in / h_ax_in
-    sax = ax.inset_axes([0.0, 1.0 + g + level * (h + g), 1.0, h], sharex=ax)
+    sax = ax.inset_axes([0.0, 1.0 + g + level * (h + g) + lift_in / h_ax_in, 1.0, h], sharex=ax)
     sax.set_yticks([])
     sax.set_ylim(0, 1)
     sax.tick_params(axis="x", bottom=False, labelbottom=False)
@@ -510,7 +511,7 @@ def legend_handles(all_runs, min_km=0.0, max_items=None):
 # --------------------------------------------------------------------------
 # Greenstone + mineral-deposit overlay track (one combined strip)
 # --------------------------------------------------------------------------
-def greenstone_index_from_npz(path, rocktypes=("greenstone",), colour="#1b7837"):
+def greenstone_index_from_npz(path, rocktypes=("greenstone",), colour="#a1d99b"):
     """PolygonIndex of just the greenstone (or given rock-type) polygons from a
     yilgarn_units.npz, all one class so runs_from_samples fills a single band."""
     d = np.load(path, allow_pickle=True)
@@ -521,15 +522,48 @@ def greenstone_index_from_npz(path, rocktypes=("greenstone",), colour="#1b7837")
     return PolygonIndex(rings, [colour] * n, ["Greenstone"] * n)
 
 
+def _stitch_rings(segs, tol=0.25):
+    """Chain open boundary arcs end-to-end (nearest endpoint within tol deg) into rings, so a
+    craton outline stored as separate arcs becomes closed polygons for a point-in-polygon test.
+    Each returned ring is closed (first point repeated)."""
+    segs = [np.asarray(s, float)[:, :2] for s in segs if len(s) >= 2]
+    used = [False] * len(segs)
+    rings = []
+    for i in range(len(segs)):
+        if used[i]:
+            continue
+        chain = [segs[i]]; used[i] = True
+        while True:
+            tail = chain[-1][-1]; best, rev, dmin = None, False, tol
+            for j, s in enumerate(segs):
+                if used[j]:
+                    continue
+                for r, pt in ((False, s[0]), (True, s[-1])):
+                    d = float(np.hypot(*(pt - tail)))
+                    if d < dmin:
+                        dmin, best, rev = d, j, r
+            if best is None:
+                break
+            used[best] = True
+            chain.append(segs[best][::-1] if rev else segs[best])
+        ring = np.vstack(chain)
+        if not np.allclose(ring[0], ring[-1]):
+            ring = np.vstack([ring, ring[0]])
+        rings.append(ring)
+    return rings
+
+
 def craton_index_from_outline(path, colour="red"):
     """PolygonIndex from a craton outline text file (lon lat per line; blank line or a
-    %/# comment separates closed segments), all one 'Craton' class. Yilgarn+Pilbara."""
+    %/# comment separates arcs). The arcs are stitched into closed rings first (the file
+    stores the Yilgarn/Pilbara boundary as open arcs, not closed polygons), all one 'Craton'
+    class, so the in-craton test along a profile is continuous rather than per-arc."""
     segs, cur = [], []
     with open(path) as f:
         for ln in f:
             s = ln.strip()
             if not s or s.startswith(("%", "#")):
-                if len(cur) >= 3:
+                if len(cur) >= 2:
                     segs.append(np.asarray(cur, float))
                 cur = []
                 continue
@@ -539,9 +573,11 @@ def craton_index_from_outline(path, colour="red"):
                     cur.append((float(p[0]), float(p[1])))
                 except ValueError:
                     pass
-    if len(cur) >= 3:
+    if len(cur) >= 2:
         segs.append(np.asarray(cur, float))
-    return PolygonIndex(segs, [colour] * len(segs), ["Craton"] * len(segs))
+    rings = _stitch_rings(segs)
+    print(f"  craton outline: {len(segs)} arcs -> {len(rings)} closed ring(s)")
+    return PolygonIndex(rings, [colour] * len(rings), ["Craton"] * len(rings))
 
 
 def draw_craton_bar(sax, runs, colour="0.45", y0=1.02, y1=1.30):
@@ -555,6 +591,59 @@ def draw_craton_bar(sax, runs, colour="0.45", y0=1.02, y1=1.30):
             sax.add_patch(Rectangle((rn.d0, y0), rn.d1 - rn.d0, y1 - y0, transform=tr,
                                      facecolor=colour, edgecolor="none", zorder=7,
                                      clip_on=False))
+
+
+def sample_vpvs_idw(stn_lon, stn_lat, stn_val, qlon, qlat, max_dist_deg=0.8, k=8, power=2.0):
+    """Inverse-distance-weighted Vp/Vs (or any per-station value) at each profile point
+    from the H-K stations. Blank (NaN) where the nearest station is farther than
+    max_dist_deg, so off-footprint gaps stay empty like the Vp/Vs map. Distances are in a
+    local azimuthal-equidistant km frame about the profile midpoint."""
+    stn_lon = np.asarray(stn_lon, float); stn_lat = np.asarray(stn_lat, float)
+    stn_val = np.asarray(stn_val, float)
+    qlon = np.asarray(qlon, float); qlat = np.asarray(qlat, float)
+    out = np.full(qlon.size, np.nan)
+    if stn_lon.size == 0 or qlon.size == 0:
+        return out
+    mid = qlon.size // 2
+    S = _local_xy(stn_lon, stn_lat, qlon[mid], qlat[mid])     # (m, 2) km
+    Q = _local_xy(qlon, qlat, qlon[mid], qlat[mid])           # (n, 2) km
+    maxkm = max_dist_deg * 111.195
+    kk = int(min(k, stn_lon.size))
+    D = np.hypot(Q[:, 0][:, None] - S[:, 0][None, :],
+                 Q[:, 1][:, None] - S[:, 1][None, :])         # (n, m) km
+    idx = np.argsort(D, axis=1)[:, :kk]                       # k nearest stations
+    dn = np.take_along_axis(D, idx, axis=1)
+    vn = stn_val[idx]
+    within = dn <= maxkm
+    w = np.where(within, 1.0 / np.maximum(dn, 1e-6) ** power, 0.0)
+    wsum = w.sum(1)
+    out = np.where(wsum > 0, (w * vn).sum(1) / np.maximum(wsum, 1e-12), np.nan)
+    out[dn[:, 0] > maxkm] = np.nan                            # nearest station too far -> blank
+    return out
+
+
+def draw_vpvs_strip(sax, dist, val, clim=(1.68, 1.86), cmap=None, label=None,
+                    label_fontsize=7):
+    """Colour-coded Vp/Vs bar along the profile (like the domain / Au-greenstone bars, but
+    the colour encodes the value). Values outside clim saturate at the ends; NaN cells are
+    transparent. `cmap` should be the same 'rgb' map used for the Vp/Vs maps/panel."""
+    dist = np.asarray(dist, float); val = np.asarray(val, float)
+    if cmap is None:
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            'rgb', [(0.78, 0, 0), (0.90, 0.55, 0), (0.1, 0.65, 0.2),
+                    (0, 0.45, 0.80), (0, 0, 0.6)], N=256)
+    try:
+        cmap = cmap.copy(); cmap.set_bad(alpha=0.0)
+    except Exception:
+        pass
+    norm = mcolors.Normalize(vmin=clim[0], vmax=clim[1])      # imshow clips -> saturated ends
+    img = np.ma.masked_invalid(val[None, :])
+    sax.imshow(img, aspect="auto", extent=[dist[0], dist[-1], 0.0, 1.0],
+               origin="lower", cmap=cmap, norm=norm, interpolation="nearest", zorder=2)
+    sax.set_ylim(0, 1)
+    if label:
+        sax.text(-0.005, 0.5, label, transform=sax.transAxes, ha="right",
+                 va="center", fontsize=label_fontsize)
 
 
 def draw_fault_arrow(top_sax, strip_axes, dc, label=None, color="red", lw=2.6, head=13,
@@ -623,7 +712,7 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
                        label_domains=True, label_boundaries=False, dedupe_km=3.0,
                        boundary_lines=False, greenstone=None, deposits=None,
                        dep_swath_km=50.0, geol_label="Au / greenstone", craton=None,
-                       faults=None, highlight_boundaries=None):
+                       faults=None, highlight_boundaries=None, vpvs=None):
     """One-call entry point for plot_xsection.
 
     top_ax      the uppermost Vs panel of the section (strips go above it)
@@ -637,13 +726,29 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
     """
     lon_f, lat_f, d_f = resample_profile(lon, lat, dist, step_km)
     strips, runs = [], {}
+    vpvs_sax = None
+    # Crustal Vp/Vs colour bar FIRST (level 0) so it sits directly on top of the Vs panel
+    if vpvs is not None:
+        vpvs_sax = strip_axes_above(top_ax, max(height_in, 0.17), gap_in, level=0)
+        vv = sample_vpvs_idw(vpvs["lon"], vpvs["lat"], vpvs["val"], lon_f, lat_f,
+                             max_dist_deg=vpvs.get("max_dist", 0.8))
+        draw_vpvs_strip(vpvs_sax, d_f, vv, clim=vpvs.get("clim", (1.68, 1.86)),
+                        cmap=vpvs.get("cmap"),
+                        label=(vpvs.get("label", "Vp/Vs") if labels else None))
+        strips.append(vpvs_sax)
+        runs["vpvs"] = None
+        print(f"  Vp/Vs track: {int(np.isfinite(vv).sum())}/{vv.size} cells filled "
+              f"(<= {vpvs.get('max_dist', 0.8):.2f} deg from a station)")
     tect_sax = None
+    # When the craton bar sits on the Vp/Vs strip, lift everything above it by _lift inches
+    # so the grey bar shows in the opened gap instead of being hidden under the domain bar.
+    _lift = 0.16 if (vpvs_sax is not None and craton is not None) else 0.0
     for key, index, lab in (("litho", litho, "Litho"),
                             ("tectonic", tectonic, "Domain")):
         if index is None:
             continue
         r = runs_from_samples(d_f, index.sample(lon_f, lat_f), index)
-        sax = strip_axes_above(top_ax, height_in, gap_in, level=len(strips))
+        sax = strip_axes_above(top_ax, height_in, gap_in, level=len(strips), lift_in=_lift)
         draw_strip(sax, r, label=lab if labels else None)
         if key == "tectonic":
             tect_sax = sax
@@ -651,15 +756,19 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
                 annotate_runs(sax, r)
         strips.append(sax)
         runs[key] = r
-    # Craton extent: a grey bar in the gap above the domain bar (no extra row, so the
-    # next strip stays close)
-    if craton is not None and tect_sax is not None:
+    # Craton extent: a grey bar in the gap just above the Vp/Vs bar (or the domain bar if
+    # there is no Vp/Vs strip), no extra row so the next strip stays close
+    _craton_base = vpvs_sax if vpvs_sax is not None else tect_sax
+    if craton is not None and _craton_base is not None:
         cr = runs_from_samples(d_f, craton.sample(lon_f, lat_f), craton)
-        draw_craton_bar(tect_sax, cr)
+        if _lift:                       # taller bar to fill the opened gap above the Vp/Vs strip
+            draw_craton_bar(_craton_base, cr, y0=1.10, y1=1.90)
+        else:
+            draw_craton_bar(_craton_base, cr)
         runs["craton"] = cr
     # Combined greenstone-fill + gold-deposit track, above the domain bar
     if greenstone is not None or deposits is not None:
-        sax = strip_axes_above(top_ax, max(height_in, 0.17), gap_in, level=len(strips))
+        sax = strip_axes_above(top_ax, max(height_in, 0.17), gap_in, level=len(strips), lift_in=_lift)
         gr = []
         if greenstone is not None:
             gr = runs_from_samples(d_f, greenstone.sample(lon_f, lat_f), greenstone)
@@ -697,22 +806,39 @@ def add_profile_strips(top_ax, panel_axes, lon, lat, dist, *, litho=None,
         # (azimuthal equidistant about its midpoint), so its own nodes are exact here
         crossings = boundaries.crossings(lon, lat, dist, dedupe_km=dedupe_km)
         hl = {str(k).lower(): v for k, v in (highlight_boundaries or [])}
-
         def _is_hl(c):
             return bool(hl) and any(str(nm).lower() in hl for nm in c.names)
         normal = [c for c in crossings if not _is_hl(c)]
         draw_boundaries(panel_axes, normal, strip_axes=strips,
                         label_names=label_boundaries, span_km=dist[-1] - dist[0],
                         panel_lines=boundary_lines)
-        if strips:                       # highlighted boundaries -> red fault arrow + label
+        if strips:                                # highlighted boundaries -> red fault arrow
             for c in crossings:
                 if not _is_hl(c):
                     continue
-                lab = next((hl[str(nm).lower()] for nm in c.names
-                            if str(nm).lower() in hl), None)
+                lab = next((hl[str(nm).lower()] for nm in c.names if str(nm).lower() in hl), None)
                 draw_fault_arrow(strips[-1], strips, c.dist, label=lab)
-                print(f"  highlight: {lab} at {c.dist:.0f} km "
-                      f"(boundary {', '.join(c.names)})")
+                print(f"  highlight: {lab} at {c.dist:.0f} km (boundary {', '.join(c.names)})")
+    # Vp/Vs colorbar on the right, spanning the stacked bar strips' height, aligned in x with
+    # the panel colorbars (same figure-coord offset _pcolor uses: panel right edge + 0.10 in).
+    if vpvs is not None and strips and vpvs.get("colorbar", True):
+        try:
+            import matplotlib as _mpl
+            fig = top_ax.figure
+            fig.canvas.draw()                      # settle inset-axes positions before reading them
+            p_top = top_ax.get_position()
+            boxes = [s.get_position() for s in strips]
+            y0 = min(b.y0 for b in boxes); y1 = max(b.y1 for b in boxes)
+            fw = fig.get_figwidth()
+            cax = fig.add_axes([p_top.x1 + 0.10 / fw, y0, 0.16 / fw, max(y1 - y0, 0.02)])
+            sm = _mpl.cm.ScalarMappable(
+                norm=mcolors.Normalize(*vpvs.get("clim", (1.68, 1.86))),
+                cmap=vpvs.get("cmap") or "jet_r")
+            cb = fig.colorbar(sm, cax=cax, extend="both")
+            cb.set_label(vpvs.get("label", "Vp/Vs"), fontsize=7)
+            cb.ax.tick_params(labelsize=6)
+        except Exception as e:
+            print(f"  Vp/Vs colorbar skipped: {e}")
     # Keep the panel title(s) above the strips (and boundary names) rather than under them.
     if strips:
         _pad = 2.0

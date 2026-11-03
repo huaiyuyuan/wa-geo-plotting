@@ -83,6 +83,9 @@ def _resolve_cmap(spec):
         cm = LinearSegmentedColormap.from_list('rgb', [
             (0.63, 0.09, 0.16), (0.88, 0.40, 0.22), (0.62, 0.70, 0.35),
             (0.38, 0.70, 0.40), (0.26, 0.62, 0.62), (0.26, 0.42, 0.72), (0.30, 0.22, 0.60)])
+    elif base in ('gmt_polar', 'gmt_polar_r'):   # GMT polar.cpt: blue - white - red (reverse = red-white-blue)
+        _c = [(0, 0, 1), (1, 1, 1), (1, 0, 0)]
+        cm = LinearSegmentedColormap.from_list(base, _c[::-1] if base.endswith('_r') else _c)
     elif base == 'tdm2':                      # muted model-age ramp (few soft hues): young
         cm = LinearSegmentedColormap.from_list('tdm2', [   # green -> tan -> old pale pink
             (0.42, 0.62, 0.40), (0.72, 0.78, 0.49), (0.85, 0.81, 0.64),
@@ -513,7 +516,8 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
              box=None, box_color=(0, 0, 0), box_lw=2.2,
              station_marker='^', station_color='k', station_open=False,
              out_name='xsection_index_map', legend_ages=False, bnd_loc='lower left',
-             field=None, yilgarn=None, cut_line=None, deposit_args=None, scalebar_km=None):
+             field=None, yilgarn=None, cut_line=None, deposit_args=None, scalebar_km=None,
+             sites=None):
     """Profile lines / station map on the WA tectonic basemap, distance ticks + labels
     every tick_km. style: map2022 = 10M units in the GSWA 2022 simplified tectonic map
     colours + major crustal boundaries; gswa = 500k units in TECTCOLOUR; craton =
@@ -690,6 +694,20 @@ def plot_map(sections, out_dir, d=None, extent=None, label='sections', moho=None
                             ha='left', va='center', zorder=8, xytext=(4, 0),
                             textcoords='offset points',
                             path_effects=[_pe.withStroke(linewidth=1.2, foreground='white')])
+    if sites is not None:               # study-site points: numbered circles in terrane colours
+        import matplotlib.patheffects as _pe
+        slo, sla = sites['lon'], sites['lat']
+        cols = sites.get('color', ['yellow'] * len(slo))
+        ssz = sites.get('size', 170)
+        ax.scatter(slo, sla, marker='o', s=ssz, c=cols,
+                   edgecolors='k', linewidths=1.0, zorder=7, **lkw)
+        fs = max(6.5, min(11.0, 0.62 * np.sqrt(ssz)))          # number font scales with marker
+        for _x, _y, _lab in zip(slo, sla, sites.get('label', [''] * len(slo))):
+            if not _lab:
+                continue
+            ax.annotate(str(_lab), (_x, _y), fontsize=fs, xycoords=xyc, ha='center',
+                        va='center', zorder=8, fontweight='bold', color='k',
+                        path_effects=[_pe.withStroke(linewidth=1.8, foreground='white')])
     if style != 'map2022' and geo is not None and geo['bnd'] is not None:
         from matplotlib.collections import LineCollection
         ax.add_collection(LineCollection(geo['bnd'].lines, colors='firebrick',
@@ -827,6 +845,13 @@ def main():
                     "tectonic basemap. No Vs model needed (extent from --extent or the "
                     "sections/stations).")
     ap.add_argument('--sections', default=None, help='sections.txt (lat1 lon1 lat2 lon2 label)')
+    ap.add_argument('--sites', default=None,
+                    help='study-site points file (e.g. examples/yilgarn_sites_19.txt): numbered '
+                         'circles in terrane colours, no profile lines')
+    ap.add_argument('--site-labels', dest='site_labels', choices=['no', 'name', 'none'],
+                    default='no', help="label sites by number (no, default), name, or none")
+    ap.add_argument('--site-size', dest='site_size', type=float, default=170.0,
+                    help='study-site marker area (points^2, default 170; number font scales with it)')
     ap.add_argument('--load-polylines', default=None, help='polylines npz (draw true picked paths)')
     ap.add_argument('--extra-sections', default=None,
                     help='a 2nd sections.txt (e.g. L1/L2) overlaid in --extra-colour with the '
@@ -1212,8 +1237,8 @@ def main():
             _hcmap, _hclim, _hnc = 'rgb', (5.8, 6.6), 16
         elif _hf in ('vs',):
             _hcmap, _hclim, _hnc = 'rgb', (3.3, 3.8), 16
-        else:                                          # k_new / k_old / k_ref = Vp/Vs (rgb)
-            _hcmap, _hclim, _hnc = 'rgb', (1.70, 1.86), 16
+        else:                                          # k_new / k_old / k_ref = Vp/Vs
+            _hcmap, _hclim, _hnc = 'gmt_polar_r', (1.70, 1.86), 16   # blue high / red low (as the sections)
         field = dict(grid2d=(LON2, LAT2, V), label=lbl, cmap=_cm(_hcmap),
                      clim=(clim if clim else _hclim), ncolors=_nc(_hnc), alpha=args.field_alpha,
                      style=(args.field_style or 'contourf'))
@@ -1398,9 +1423,25 @@ def main():
             print(f"  '{ov[5]}' kept after clip: {int(keep.sum())}")
         overlays = cov
 
-    if not sections and not extra_sections and sta is None and not overlays and args.extent is None:
+    if (not sections and not extra_sections and sta is None and not overlays
+            and not args.sites and args.extent is None):
         ap.error("give something to draw: --sections, --extra-sections, --stations, "
-                 "--map-stations, or --extent")
+                 "--map-stations, --sites, or --extent")
+
+    sites_arg = None
+    if args.sites:
+        import tomo2d as t2
+        _ss = t2.load_sites(args.sites)
+        if args.site_labels == 'name':
+            _lab = [s['name'] for s in _ss]
+        elif args.site_labels == 'none':
+            _lab = [''] * len(_ss)
+        else:
+            _lab = [str(s['no']) for s in _ss]
+        sites_arg = dict(lon=[s['lon'] for s in _ss], lat=[s['lat'] for s in _ss],
+                         color=[t2.terrane_colour(s['terrane']) for s in _ss], label=_lab,
+                         size=args.site_size)
+        print(f"  sites: {len(_ss)} study points <- {args.sites}")
 
     plot_map(sections, args.out_dir, d=None,
              extent=tuple(args.extent) if args.extent else None,
@@ -1423,7 +1464,7 @@ def main():
              legend_ages=args.legend_ages, bnd_loc=args.bnd_loc, field=field,
              yilgarn=yilgarn, cut_line=cut_line,
              deposit_args=(args if _have_deposits else None),
-             scalebar_km=args.scale_bar)
+             scalebar_km=args.scale_bar, sites=sites_arg)
 
 
 if __name__ == '__main__':

@@ -5,20 +5,35 @@
 #             export WA_DATA=~/wa_data ; source <repo>/env_stage6.sh
 export WGP=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-if [ -n "$WA_DATA" ]; then                        # portable bundle
+if [ -n "$WA_DATA" ]; then                        # portable bundle (laptop/basin/mantle)
+    export A=$WA_DATA                             # ASDF.processing root (v3c models hang off here)
     export ST=$WA_DATA/stage6
     export V3B=$WA_DATA/v3b
     export MOHO=$WA_DATA/moho/AR23-moho-hmp.txt
     export WA_DERIVED=$WA_DATA/derived            # read by config.py
     export WA_STATIONS=$WA_DATA/stations/stations_v2.txt
     export WA_FOOTPRINT_DIR=$WA_DATA/footprint
+    export CCP=$WA_DATA/CCP                       # CCP Moho .mat (+ cube if bundled with --ccp)
+    export CMAPX=$WA_DATA/cmapx.mat               # MATLAB Vsv colormap
+    export HK=$WA_DATA/stations/HK.final.2026.merged.txt     # per-station Vp/Vs (--vpvs-track)
+    export DEPDIR=$WA_DATA/deposits               # gold/greenstone .mat (--deposit-dir)
     [ -d $WA_DATA/cartopy_data ] && export CARTOPY_DATA_DIR=$WA_DATA/cartopy_data
-else                                              # d204403
-    export ST=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/stage6
-    export V3B=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing/v3b
+else                                              # d204403 (data under /workspace, /data/25)
+    export A=/workspace/WA.Array/Year.3/noise.processing/ASDF.processing
+    export ST=$A/stage6
+    export V3B=$A/v3b
     export MOHO=/workspace/Others.data/AusMoho2023/AR23-moho-hmp.txt
     export WA_DERIVED=${WA_DERIVED:-/workspace/shape.files/derived}
+    export CCP=/workspace/CCP/CCP.WA.Array.2027.phase.3
+    export CMAPX=/data/25/yuan/mfiles/mat/cmapx.mat
+    export HK=$WGP/data/stations/HK.final.2026.merged.txt
+    export DEPDIR=$WGP/data/deposits
 fi
+# recent v3c / CCP-Moho models + Moho pick (derive from $A / $CCP so both machines match)
+export XI4=$A/v3c/Fvs.v3c.ccpmoho.iter.4.ZT.npz            # final xi (ZT)
+export COMB=$A/v3c/v2v3comb/Fvs.v3c.v2v3comb.ccpmoho.iter.1.Z.npz   # v2v3 combined Vsv (.Z)
+export SMOO=$A/v3c/smoomoho/Fvs.v3c.ccpmoho.smoomoho.iter.4.ZT.npz  # smooth-xi (ZT)
+export FINAL=$CCP/Moho.picked/moho_ccp_refined.final.mat  # CCP refined Moho (red line / --moho-grid)
 export WA_MOHO=$MOHO
 export WA_TECTONICS_NPZ=$WA_DERIVED/wa_tectonics.npz
 export WA_BOUNDARIES_NPZ=$WA_DERIVED/wa_crustal_boundaries.npz

@@ -185,24 +185,24 @@ def _parse_faults(specs, default_half_km=40.0):
 
 
 def _parse_highlight(specs):
-    """--highlight-boundary 'NPZNAME:LABEL' -> [(npz_name, label), ...]. The crustal-boundary
-    crossing whose npz name == NPZNAME is drawn as the RED fault arrow labelled LABEL (default
-    = NPZNAME), located at the true per-profile crossing. e.g. 'Youanmi east:Ida Fault'."""
+    """--highlight-boundary 'NPZNAME:LABEL' -> list of (npz_name, label). LABEL optional
+    (defaults to the npz name). Draws that crustal boundary (from wa_crustal_boundaries.npz)
+    as the red fault arrow at its true per-profile crossing, hiding its normal black arrow.
+    e.g. 'Youanmi east:Ida Fault' (the Youanmi/Eastern-Goldfields terrane margin = Ida Fault)."""
     out = []
     for s in (specs or []):
         name, _, lab = s.partition(':')
-        name = name.strip()
-        if not name:
-            raise SystemExit(f"--highlight-boundary: bad spec {s!r}; want 'NPZNAME:LABEL' "
-                             "e.g. 'Youanmi east:Ida Fault'")
-        out.append((name, lab.strip() or name))
+        name = name.strip(); lab = lab.strip() or name
+        if name:
+            out.append((name, lab))
     return out or None
 
 
 def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False,
                   domain_colours='map2022', greenstone_npz=None, deposits=None,
-                  dep_swath=50.0, craton_outline=None, faults=None,
-                  highlight_boundaries=None):
+                  dep_swath=50.0, craton_outline=None, faults=None, highlight_boundaries=None,
+                  vpvs_track=None, vpvs_lim=(1.68, 1.86), vpvs_max_dist=0.8,
+                  vpvs_cmap='gmt_polar_r', vpvs_ncolors=16):
     import xsection_strips as xs
     want = {w.strip() for w in spec.split(',') if w.strip()}
     bad = want - _STRIP_ITEMS
@@ -247,6 +247,20 @@ def _load_geology(spec, litho_npz=None, tect_npz=None, bnd_npz=None, lines=False
             print(f"  greenstone track load failed: {e}")
     elif greenstone_npz:
         print(f"  greenstone npz not found ({greenstone_npz}) - band skipped")
+    g['vpvs'] = None
+    if vpvs_track and os.path.isfile(vpvs_track):
+        try:
+            from plot_wa_map import _read_hk
+            vlon, vlat, vval = _read_hk(vpvs_track, 'k_new')
+            g['vpvs'] = dict(lon=vlon, lat=vlat, val=vval, clim=tuple(vpvs_lim),
+                             max_dist=vpvs_max_dist, label='Vp/Vs',
+                             cmap=_cmap(vpvs_cmap, max(int(vpvs_ncolors), 2)))
+            print(f"  strips: Vp/Vs track <- {vpvs_track} ({vlon.size} stations, "
+                  f"clim {vpvs_lim[0]:.2f}-{vpvs_lim[1]:.2f}, cmap {vpvs_cmap} x{vpvs_ncolors})")
+        except Exception as e:
+            print(f"  Vp/Vs track load failed: {e}")
+    elif vpvs_track:
+        print(f"  Vp/Vs track table not found ({vpvs_track}) - strip skipped")
     return g
 
 
@@ -257,6 +271,8 @@ def _strip_height_in(g):
     h = 0.17 * ((g['litho'] is not None) + (g['tect'] is not None))
     if g.get('greenstone') is not None or g.get('deposits') is not None:
         h += 0.20                                  # greenstone + gold track
+    if g.get('vpvs') is not None:
+        h += 0.20                                  # Vp/Vs colour bar
     if g['bnd'] is not None:
         h += 0.28                                  # boundary down-arrows
         if g['names']:
@@ -275,7 +291,8 @@ def _add_geology(top_ax, axes, plon, plat, dist, names=None):
                                 greenstone=_GEO.get('greenstone'), deposits=_GEO.get('deposits'),
                                 dep_swath_km=_GEO.get('dep_swath', 50.0),
                                 craton=_GEO.get('craton'), faults=_GEO.get('faults'),
-                                highlight_boundaries=_GEO.get('highlight_boundaries'))
+                                highlight_boundaries=_GEO.get('highlight_boundaries'),
+                                vpvs=_GEO.get('vpvs'))
     if res.crossings and names is not False:
         print('  boundary crossings: ' + ', '.join(
             f"{c.dist:.0f} km" + (f" ({'/'.join(c.names)})" if c.names else '')
@@ -552,6 +569,13 @@ def _cmap(name, n=32):
                    (0.30, 0.22, 0.60)]
         cm = LinearSegmentedColormap.from_list('rgb', anchors, N=256)
         return cm.resampled(n) if n and n > 0 else cm
+    if name in ('gmt_polar', 'gmt_polar_r'):        # GMT polar.cpt: blue -> white -> red
+        from matplotlib.colors import LinearSegmentedColormap
+        cols = [(0, 0, 1), (1, 1, 1), (1, 0, 0)]
+        if name.endswith('_r'):
+            cols = cols[::-1]
+        cm = LinearSegmentedColormap.from_list(name, cols, N=256)
+        return cm.resampled(n) if n and n > 0 else cm
     if name in DIVERGING and (DIV_GAP > 0 or DIV_WHITE > 0):
         from matplotlib.colors import ListedColormap
         base = matplotlib.colormaps[name]
@@ -719,6 +743,7 @@ def _set_ccp_stack(args):
     plot_section._ccp_clim = args.ccp_clim
     plot_section._ccp_neutral = args.ccp_neutral
     plot_section._ccp_method = args.ccp_method
+    plot_section._ccp_cmap = getattr(args, 'ccp_cmap', None)
     plot_section._ccp_tag = ''
     if not getattr(args, 'ccp_pmat', None):
         return
@@ -758,7 +783,9 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
                  long_ratio=3.0, moho_mask=0.5, xi_panel='xi', xi_ref='depth',
                  clim_xi=5.0, div_gap=None, div_white=None, clim_diff=4.0, vlim=None,
                  panels=None, var_ref='model', allprof_vsv_ref=None, allprof_xi_ref=None,
-                 smooth=False, geol_tag='', vs_smooth=0.0, xi_gap=None):
+                 smooth=False, geol_tag='', vs_smooth=0.0, xi_gap=None, xi_cmap='rwb',
+                 dvsv_cmap='RdBu', xi2_d=None, xi2_label='model 2', xi_label='',
+                 xi_diff_lim=0.05):
     global DIV_GAP, DIV_WHITE, RWB_GAP
     if div_gap is not None:
         DIV_GAP = div_gap
@@ -801,6 +828,21 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     err_p = _sample_profile(Lon, Lat, Vsv_err, plon, plat) if Vsv_err is not None else None
     xi_p  = _sample_profile(Lon, Lat, Xi, plon, plat) if Xi is not None else None
     vpvs_p = _sample_profile(Lon, Lat, Vpvs, plon, plat) if Vpvs is not None else None
+    xi2_p = None                                 # second model's xi (comparison panel)
+    if xi2_d is not None and xi2_d.get('Xi') is not None:
+        z2 = np.asarray(xi2_d['z'], float)
+        _x2 = _sample_profile(xi2_d['Lon'], xi2_d['Lat'], np.asarray(xi2_d['Xi'], float), plon, plat)
+        xi2_p = np.vstack([np.interp(z, z2, _x2[i], left=np.nan, right=np.nan)  # onto main z grid
+                           for i in range(_x2.shape[0])])
+        _f2 = xi2_p[np.isfinite(xi2_p)]
+        print(f"  xi2 panel [{xi2_label}]: {_f2.size} finite cells, "
+              + (f"xi {_f2.min():.3f}-{_f2.max():.3f} (std {_f2.std():.4f})" if _f2.size else "ALL NaN"))
+    xidiff_p = (xi_p - xi2_p) if (xi_p is not None and xi2_p is not None) else None
+    if xidiff_p is not None:
+        _fd = xidiff_p[np.isfinite(xidiff_p)]
+        if _fd.size:
+            print(f"  xi-diff ({xi_label or 'model1'} - {xi2_label}): "
+                  f"{-np.abs(_fd).max():.3f}..{np.abs(_fd).max():.3f} (rms {np.sqrt((_fd**2).mean()):.4f})")
 
     # CCP RF amplitude along the profile, interpolated onto the model depth grid z so it
     # shares the D,Z mesh (and _pcolor's contourf + Moho overlays + bar) with the other panels.
@@ -857,6 +899,9 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     rows = ['abs', 'rel']
     if vdiff_p is not None: rows.append('vdiff')
     if have_xi and xi_panel in ('xi', 'both'): rows.append('xi')
+    if xi2_p is not None and np.isfinite(xi2_p).any():   # explicitly requested -> always show
+        rows.append('xi2')
+    if xidiff_p is not None and np.isfinite(xidiff_p).any(): rows.append('xidiff')
     if dxi_p is not None: rows.append('dxi')
     if vpvs_p is not None: rows.append('vpvs')
     if ccp_p is not None: rows.append('ccp')
@@ -937,15 +982,26 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
         _pcolor(axes[r], vsv_p, _cmap(CMAP_ABS, ncd), vmin_v, vmax_v,
                 f'{vname} (km/s)', title=f'{vname} (km/s)'); r += 1
     if 'rel' in rows:
-        _pcolor(axes[r], dln_p, _cmap('RdBu', ncd), -clim_rel, clim_rel,
+        _relcm = _cmap('RdBu', ncd) if dvsv_cmap == 'RdBu' else \
+            matplotlib.colormaps[dvsv_cmap].resampled(ncd)   # e.g. jet_r (flipped MATLAB jet)
+        _pcolor(axes[r], dln_p, _relcm, -clim_rel, clim_rel,
                 f'd{vname} (%)', title=f'd{vname} (%) vs {_ref_lbl}'); r += 1
     if 'vdiff' in rows and vdiff_p is not None:
         _pcolor(axes[r], vdiff_p, _cmap('RdBu', ncd), -clim_diff, clim_diff,
                 f'{vname} vs {_REF["label"]} (%)',
                 title=f'{vname}: this model vs {_REF["label"]} (%)  (blue = faster here)'); r += 1
+    _xicm = _cmap('rwb', ncd) if xi_cmap == 'rwb' else matplotlib.colormaps[xi_cmap].resampled(ncd)
     if 'xi' in rows and have_xi and xi_panel in ('xi', 'both'):
-        _pcolor(axes[r], xi_p, _cmap('rwb', ncd), XI_LIM[0], XI_LIM[1],
-                'xi', title=XI_TITLE); r += 1
+        _xt = f'{XI_TITLE}   [{xi_label}]' if xi_label else XI_TITLE
+        _pcolor(axes[r], xi_p, _xicm, XI_LIM[0], XI_LIM[1], 'xi', title=_xt); r += 1
+    if 'xi2' in rows and xi2_p is not None:         # second model's xi (same scale/colormap)
+        _pcolor(axes[r], xi2_p, _xicm, XI_LIM[0], XI_LIM[1], 'xi',
+                title=f'{XI_TITLE}   [{xi2_label}]'); r += 1
+    if 'xidiff' in rows and xidiff_p is not None:   # xi difference (model1 - model2)
+        _dcm = _cmap('RdBu', ncd) if dvsv_cmap == 'RdBu' else matplotlib.colormaps[dvsv_cmap].resampled(ncd)
+        _l1 = xi_label or 'model 1'
+        _pcolor(axes[r], xidiff_p, _dcm, -xi_diff_lim, xi_diff_lim, 'Δxi',
+                title=f'Δxi  ({_l1} − {xi2_label})   blue = {_l1} higher'); r += 1
     if 'dxi' in rows and dxi_p is not None:
         _pcolor(axes[r], dxi_p, _cmap('RdBu', ncd), -clim_xi, clim_xi,
                 'dlnXi (%)', title=f'dlnXi (%) vs {_xref_lbl}'); r += 1
@@ -957,7 +1013,10 @@ def plot_section(d, lat1, lon1, lat2, lon2, label,
     if 'ccp' in rows and ccp_p is not None:
         import plot_ccp_profiles as pcp
         cclim = getattr(plot_section, '_ccp_clim', 0.08)
-        cmap_ccp = pcp._ccp_cmap(getattr(plot_section, '_ccp_neutral', 0.25)).resampled(ncd)
+        _ccpname = getattr(plot_section, '_ccp_cmap', None)
+        _use_soft = (not _ccpname) or str(_ccpname).lower() == 'soft'
+        cmap_ccp = (pcp._ccp_cmap(getattr(plot_section, '_ccp_neutral', 0.25)).resampled(ncd)
+                    if _use_soft else _cmap(_ccpname, ncd))
         ctag = getattr(plot_section, '_ccp_tag', '')
         _pcolor(axes[r], ccp_p, cmap_ccp, -cclim, cclim, 'RF amplitude', extend='both',
                 title='CCP RF amplitude' + (f' (pvh.{ctag})' if ctag else '')); r += 1
@@ -1463,9 +1522,25 @@ def main():
     ap.add_argument('--vs-smooth', dest='vs_smooth', type=float, default=0.0, metavar='SIGMA',
                     help='gently Gaussian-smooth the Vs panel only (NaN-aware, SIGMA in grid '
                          'cells; try 1-2). 0 = off. Does not touch xi / CCP.')
+    ap.add_argument('--dvsv-cmap', dest='dvsv_cmap', default='RdBu', metavar='NAME',
+                    help="dlnVs / dViso panel colormap (default RdBu). Any matplotlib name, "
+                         "e.g. jet_r (flipped MATLAB jet), seismic, coolwarm.")
+    ap.add_argument('--xi2-fvs', dest='xi2_fvs', default=None, metavar='MODEL.npz[:LABEL]',
+                    help="add a SECOND xi panel from another ZT model (same scale/colormap) "
+                         "below the main xi panel, to compare two xi models in one figure. "
+                         "Use --panels xi,xi2 for a xi-vs-xi plot. e.g. "
+                         "--xi2-fvs 'Fvs...iter.1.ZT.npz:no Moho'")
+    ap.add_argument('--xi-label', dest='xi_label', default='', metavar='LABEL',
+                    help='tag for the MAIN xi panel title (e.g. "with Moho"), for xi2 comparisons.')
+    ap.add_argument('--xi-diff-lim', dest='xi_diff_lim', type=float, default=0.05, metavar='D',
+                    help='symmetric +/-D range for the xi-difference panel (main - xi2). Add '
+                         "'xidiff' to --panels to show it, e.g. --panels xi,xi2,xidiff. Default 0.05.")
+    ap.add_argument('--xi-cmap', dest='xi_cmap', default='RdBu', metavar='NAME',
+                    help="xi colormap: a general blue-red diverging map (RdBu default, or "
+                         "coolwarm / bwr / seismic), or 'rwb' for the custom red-white-blue.")
     ap.add_argument('--xi-gap', dest='xi_gap', type=float, default=None, metavar='GAP',
-                    help='xi colorbar white-centre width (default 0.12, a tight white band). '
-                         'Lower = more gradual red->white->blue transition; 0 = fully smooth.')
+                    help="xi white-centre width for the 'rwb' colormap only (default 0.12). "
+                         'Lower = more gradual; 0 = fully smooth. Ignored for RdBu/others.')
     ap.add_argument('--field-style', default='contourf', choices=['contourf', 'smooth'],
                     help='contourf = discrete --ncolors bands (default); smooth = continuous '
                          'interpolated shading (pcolormesh gouraud), matching the MATLAB landscape')
@@ -1492,6 +1567,10 @@ def main():
                     help='CCP soft white centre: fraction of ±clim near zero that fades to white')
     ap.add_argument('--ccp-method', default='linear', choices=['linear', 'nearest', 'cubic'],
                     help='CCP smooth-pass interpolant')
+    ap.add_argument('--ccp-cmap', default='PuOr', metavar='NAME',
+                    help="colormap for the CCP RF panel, kept distinct from the Vsv/xi/Vp-Vs "
+                         "palettes (default PuOr = orange -/ purple +). Pass a matplotlib name; "
+                         "'' or 'soft' restores the red-white-blue --ccp-neutral map.")
     ap.add_argument('--xi-lim', nargs=2, type=float, default=None, metavar=('LO', 'HI'),
                     help='xi colour range for the absolute xi panel, e.g. 0.95 1.05 '
                          '(default 0.92 1.08)')
@@ -1596,15 +1675,28 @@ def main():
                          'is inside the Yilgarn/Pilbara craton, with red margin ticks')
     ap.add_argument('--craton-outline', default='data/geology/yilgarn_craton_outline.txt',
                     help='craton outline (lon lat, blank-line segments) for --craton-line')
+    ap.add_argument('--vpvs-track', default=None, metavar='HK',
+                    help='add a colour-coded crustal Vp/Vs bar above the panels (like the domain / '
+                         'Au-greenstone bars), sampled (IDW) along the profile from an H-K table '
+                         "k_new column, e.g. --vpvs-track data/stations/HK.final.2026.merged.txt")
+    ap.add_argument('--vpvs-lim', nargs=2, type=float, default=(1.68, 1.86), metavar=('LO', 'HI'),
+                    help='Vp/Vs colour range for --vpvs-track (default 1.68 1.86; ends saturate)')
+    ap.add_argument('--vpvs-max-dist', type=float, default=0.8,
+                    help='blank the Vp/Vs bar where no station is within this many degrees (default 0.8)')
+    ap.add_argument('--vpvs-cmap', default='gmt_polar_r', metavar='NAME',
+                    help='colormap for the --vpvs-track bar (default gmt_polar_r = GMT polar reversed, '
+                         "red low -> white -> blue high, so blue = high value); discretised to --ncolors. "
+                         "e.g. 'gmt_polar', 'bwr', 'RdBu', 'jet_r'.")
     ap.add_argument('--fault', action='append', default=[], metavar='LABEL:LON,LAT',
                     help='mark a fault with a red down-arrow on the top strip (same style as the '
                          'boundary crossings, but red + thick) at the profile point nearest '
                          "LON,LAT, with a red LABEL above. Repeatable. e.g. --fault 'Ida Fault:121.3,-29.5'")
-    ap.add_argument('--highlight-boundary', dest='highlight_boundary', action='append',
-                    default=[], metavar='NPZNAME:LABEL',
-                    help='draw a named crustal boundary (from the boundaries npz) as the red '
-                         'fault arrow at its TRUE per-profile crossing, labelled LABEL. '
-                         "Repeatable. e.g. --highlight-boundary 'Youanmi east:Ida Fault'")
+    ap.add_argument('--highlight-boundary', dest='highlight_boundary', action='append', default=[],
+                    metavar='NPZNAME:LABEL',
+                    help='draw a named crustal boundary (from wa_crustal_boundaries.npz) as the '
+                         'red fault arrow at its TRUE per-profile crossing, and hide its normal '
+                         "black arrow. LABEL optional. Repeatable. e.g. "
+                         "--highlight-boundary 'Youanmi east:Ida Fault' (the Ida Fault margin).")
     ap.add_argument('--gold-file', default=None,
                     help='deposit list: whitespace/comma columns "lon lat [endowment] [kind]". '
                          'If omitted, reads <deposit-dir>/<kind>_deposits.mat (as the maps do).')
@@ -1686,12 +1778,19 @@ def main():
     if args.strips and not args.index_only:
         geo_args = (args.strips, args.litho_npz, args.tect_npz, args.bnd_npz, args.bnd_lines,
                     args.domain_colours, _gs_npz, _deposits, args.gold_swath, _craton, _faults,
-                    _highlight)
+                    _highlight, args.vpvs_track, tuple(args.vpvs_lim), args.vpvs_max_dist,
+                    args.vpvs_cmap, args.ncolors)
         _GEO = _load_geology(*geo_args)
 
     print(f"Loading {args.fvs} ...")
     d = _load_fvs(args.fvs, args.vel)
     plot_section._fvsname = args.fvs   # for Viso/Vsv label detection
+    _xi2_d = None; _xi2_label = 'model 2'
+    if args.xi2_fvs:                    # second xi model for the comparison panel
+        _p2, _, _lab2 = args.xi2_fvs.partition(':')
+        _xi2_d = _load_fvs(_p2.strip(), 'model')
+        _xi2_label = _lab2.strip() or os.path.basename(_p2.strip())
+        print(f"  xi2 (compare): {_p2.strip()}  [{_xi2_label}]")
     if args.var_ref == 'yilgarn' and not args.ref_domain:
         args.ref_domain = 'yilgarn'    # --var-ref yilgarn == --ref-domain yilgarn
     if args.ref_domain:                # dln reference = a tectonic domain's mean
@@ -1735,7 +1834,9 @@ def main():
               div_gap=args.div_gap, div_white=args.div_white,
               clim_diff=args.clim_diff, vlim=args.vlim, var_ref=args.var_ref,
               smooth=(args.field_style == 'smooth'), geol_tag=geol_tag, vs_smooth=args.vs_smooth,
-              xi_gap=args.xi_gap,
+              xi_gap=args.xi_gap, xi_cmap=args.xi_cmap, dvsv_cmap=args.dvsv_cmap,
+              xi2_d=_xi2_d, xi2_label=_xi2_label, xi_label=args.xi_label,
+              xi_diff_lim=args.xi_diff_lim,
               panels=([p for p in args.panels.split(',') if p.strip()] if args.panels else None))
 
     # --- Assemble the section list (ginput / load / sections / start-end) ---
